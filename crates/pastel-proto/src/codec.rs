@@ -129,7 +129,20 @@ pub fn validate_server(msg: &ServerMsg, depth: u8) -> Result<(), CodecError> {
                 )?;
             }
             crate::msg::GameEvent::Cleared { .. } => {}
+            crate::msg::GameEvent::WordPickStarted { .. } => {}
+            crate::msg::GameEvent::HintReveal { mask } => {
+                check_len("hint_reveal.mask", mask.len(), MAX_WORD_LEN)?;
+            }
         },
+        ServerMsg::WordOptions { words, .. } => {
+            check_len("word_options.words", words.len(), MAX_WORD_OPTIONS)?;
+            for w in words {
+                check_len("word_options.words[i]", w.len(), MAX_WORD_LEN)?;
+            }
+        }
+        ServerMsg::DrawerWord { word, .. } => {
+            check_len("drawer_word.word", word.len(), MAX_WORD_LEN)?;
+        }
         ServerMsg::Guess { .. } | ServerMsg::Ping { .. } | ServerMsg::Bye { .. } => {}
     }
     Ok(())

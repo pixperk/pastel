@@ -1,4 +1,4 @@
-use crate::types::{Player, PlayerId, Point, RoomCode, RoomSnapshot, Seq};
+use crate::types::{GameMode, Player, PlayerId, Point, RoomCode, RoomSnapshot, Seq};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -10,7 +10,7 @@ pub struct Hello {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GameAction {
-    Start,
+    Start { mode: GameMode },
     PickWord(u8),
     Kick(PlayerId),
     Clear,
@@ -22,6 +22,8 @@ pub enum GameEvent {
         drawer: PlayerId,
         word_mask: String,
         duration_ms: u32,
+        round_index: u8,
+        total_rounds: u8,
     },
     RoundEnd {
         word: String,
@@ -32,6 +34,15 @@ pub enum GameEvent {
     },
     Cleared {
         by: PlayerId,
+    },
+    WordPickStarted {
+        drawer: PlayerId,
+        deadline_ms: u32,
+        round_index: u8,
+        total_rounds: u8,
+    },
+    HintReveal {
+        mask: String,
     },
 }
 
@@ -118,5 +129,16 @@ pub enum ServerMsg {
     },
     Bye {
         reason: ByeReason,
+    },
+    /// Unicast to the drawer at round-pick time with the words to choose from.
+    WordOptions {
+        words: Vec<String>,
+        deadline_ms: u32,
+    },
+    /// Unicast to the drawer once a word has been picked, so their UI can
+    /// show the full word while everyone else only sees the mask.
+    DrawerWord {
+        word: String,
+        duration_ms: u32,
     },
 }

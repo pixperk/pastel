@@ -5,6 +5,31 @@ use std::fmt;
 pub type Seq = u64;
 pub type PlayerId = u32;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GameMode {
+    Sprint,
+    Standard,
+    Marathon,
+}
+
+impl GameMode {
+    pub fn rounds(self) -> u8 {
+        match self {
+            GameMode::Sprint => 3,
+            GameMode::Standard => 5,
+            GameMode::Marathon => 7,
+        }
+    }
+
+    pub fn word_options(self) -> u8 {
+        match self {
+            GameMode::Sprint => 7,
+            GameMode::Standard => 5,
+            GameMode::Marathon => 3,
+        }
+    }
+}
+
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

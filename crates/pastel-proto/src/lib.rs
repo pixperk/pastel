@@ -15,5 +15,6 @@ pub use codec::{
 pub use limits::*;
 pub use msg::{ByeReason, ClientMsg, GameAction, GameEvent, GuessKind, Hello, ServerMsg};
 pub use types::{
-    ChatLine, CompletedStroke, Player, PlayerId, Point, RoomCode, RoomCodeError, RoomSnapshot, Seq,
+    ChatLine, CompletedStroke, GameMode, Player, PlayerId, Point, RoomCode, RoomCodeError,
+    RoomSnapshot, Seq,
 };
