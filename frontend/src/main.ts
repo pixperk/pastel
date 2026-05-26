@@ -1,4 +1,6 @@
+import { CHAT_BUCKET_CAPACITY, CHAT_BUCKET_REFILL_PER_SEC, TokenBucket } from "./bucket";
 import { DrawingSurface } from "./canvas";
+import { mountChat, type ChatPanel } from "./chat";
 import { rgbToCss } from "./palette";
 import { parseRoomCode, type Player, type ServerMsg } from "./proto";
 import { loadInitialColor, loadInitialTool, mountToolbar } from "./toolbar";
@@ -30,7 +32,6 @@ function pickName(): string {
     ? `Hi ${stored}! Keep this name, or type a new one:`
     : "Pick a name";
   const reply = window.prompt(prompt, stored ?? "");
-  // Cancel: keep stored if present, fall back to anon.
   if (reply === null) {
     if (stored) return stored;
     window.localStorage.setItem("pastel.name", "anon");
@@ -51,6 +52,7 @@ const canvasEl = document.getElementById("canvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLElement;
 const playersEl = document.getElementById("players") as HTMLElement;
 const toolbarEl = document.getElementById("toolbar") as HTMLElement;
+const chatEl = document.getElementById("chat") as HTMLElement;
 
 const room = pickRoomCode();
 const name = pickName();
@@ -71,13 +73,31 @@ mountToolbar(toolbarEl, {
 
 const players = new Map<number, Player>();
 const playerColors = new Map<number, number>();
+let youId: number | null = null;
+
+const chatBucket = new TokenBucket(CHAT_BUCKET_CAPACITY, CHAT_BUCKET_REFILL_PER_SEC);
+
+const chat: ChatPanel = mountChat(chatEl, {
+  onSend: (text) => {
+    if (!chatBucket.tryTake()) return false;
+    conn.send({ kind: "Chat", text });
+    return true;
+  },
+});
+
+function nameOf(id: number, fallback = "anon"): string {
+  return players.get(id)?.name ?? fallback;
+}
+
+function colorOf(id: number): number {
+  return playerColors.get(id) ?? 0x76767c;
+}
 
 function renderPlayers(): void {
   const items = Array.from(players.values()).map((p) => {
-    const color = rgbToCss(playerColors.get(p.id) ?? 0x76767c);
-    return `<li><span class="swatch" style="background:${color}"></span>${escapeHtml(
-      p.name,
-    )}</li>`;
+    const color = rgbToCss(colorOf(p.id));
+    const youTag = p.id === youId ? ' <span class="players-you">(you)</span>' : "";
+    return `<li><span class="swatch" style="background:${color}"></span>${escapeHtml(p.name)}${youTag}</li>`;
   });
   playersEl.innerHTML = `<h2>Room ${room}</h2><ul>${items.join("")}</ul>`;
 }
@@ -91,8 +111,9 @@ const wsUrl = (() => {
 
 function handleMessage(msg: ServerMsg): void {
   switch (msg.kind) {
-    case "Welcome":
+    case "Welcome": {
       surface.setYouId(msg.you);
+      youId = msg.you;
       players.clear();
       playerColors.clear();
       for (const p of msg.snapshot.players) players.set(p.id, p);
@@ -100,15 +121,24 @@ function handleMessage(msg: ServerMsg): void {
       for (const s of msg.snapshot.completed) playerColors.set(s.player, s.color);
       renderPlayers();
       surface.applySnapshot(msg);
+      chat.clear();
+      chat.appendSystem(`joined room ${room}`);
       return;
-    case "Presence":
-      for (const p of msg.joined) players.set(p.id, p);
+    }
+    case "Presence": {
+      for (const p of msg.joined) {
+        players.set(p.id, p);
+        if (p.id !== youId) chat.appendSystem(`${p.name} joined`);
+      }
       for (const id of msg.left) {
+        const who = nameOf(id);
         players.delete(id);
         playerColors.delete(id);
+        chat.appendSystem(`${who} left`);
       }
       renderPlayers();
       return;
+    }
     case "Stroke":
       playerColors.set(msg.player, msg.color);
       surface.handleStrokeMessage(
@@ -122,17 +152,33 @@ function handleMessage(msg: ServerMsg): void {
       );
       renderPlayers();
       return;
+    case "Chat":
+      chat.appendMessage(
+        nameOf(msg.player),
+        msg.text,
+        colorOf(msg.player),
+        msg.player === youId,
+      );
+      return;
+    case "Guess":
+      if (msg.guess === "Correct") {
+        chat.appendCorrectGuess(nameOf(msg.player), colorOf(msg.player));
+      }
+      return;
     case "Resume":
       for (const e of msg.events) handleMessage(e);
       return;
     case "Bye":
       statusEl.textContent = `disconnected: ${msg.reason.toLowerCase()}`;
+      chat.appendSystem(`disconnected: ${msg.reason.toLowerCase()}`);
       return;
     case "Game":
-      if (msg.event.kind === "Cleared") surface.clear();
+      if (msg.event.kind === "Cleared") {
+        surface.clear();
+        const who = nameOf(msg.event.by);
+        chat.appendSystem(`${who} cleared the canvas`);
+      }
       return;
-    case "Chat":
-    case "Guess":
     case "Ping":
       return;
   }
