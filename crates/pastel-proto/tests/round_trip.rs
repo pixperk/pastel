@@ -103,9 +103,17 @@ fn arb_hello() -> impl Strategy<Value = Hello> {
         })
 }
 
+fn arb_game_mode() -> impl Strategy<Value = GameMode> {
+    prop_oneof![
+        Just(GameMode::Sprint),
+        Just(GameMode::Standard),
+        Just(GameMode::Marathon),
+    ]
+}
+
 fn arb_game_action() -> impl Strategy<Value = GameAction> {
     prop_oneof![
-        Just(GameAction::Start),
+        arb_game_mode().prop_map(|mode| GameAction::Start { mode }),
         any::<u8>().prop_map(GameAction::PickWord),
         any::<u32>().prop_map(GameAction::Kick),
         Just(GameAction::Clear),
@@ -114,13 +122,24 @@ fn arb_game_action() -> impl Strategy<Value = GameAction> {
 
 fn arb_game_event() -> impl Strategy<Value = GameEvent> {
     prop_oneof![
-        (any::<u32>(), arb_text(MAX_WORD_LEN), any::<u32>()).prop_map(
-            |(drawer, word_mask, duration_ms)| GameEvent::RoundStart {
-                drawer,
-                word_mask,
-                duration_ms,
-            }
-        ),
+        (
+            any::<u32>(),
+            arb_text(MAX_WORD_LEN),
+            any::<u32>(),
+            any::<u8>(),
+            any::<u8>()
+        )
+            .prop_map(
+                |(drawer, word_mask, duration_ms, round_index, total_rounds)| {
+                    GameEvent::RoundStart {
+                        drawer,
+                        word_mask,
+                        duration_ms,
+                        round_index,
+                        total_rounds,
+                    }
+                }
+            ),
         (
             arb_text(MAX_WORD_LEN),
             vec((any::<u32>(), any::<u32>()), 0..=MAX_PLAYERS_PER_ROOM),
@@ -129,6 +148,15 @@ fn arb_game_event() -> impl Strategy<Value = GameEvent> {
         vec((any::<u32>(), any::<u32>()), 0..=MAX_PLAYERS_PER_ROOM)
             .prop_map(|final_scores| GameEvent::GameOver { final_scores }),
         any::<u32>().prop_map(|by| GameEvent::Cleared { by }),
+        (any::<u32>(), any::<u32>(), any::<u8>(), any::<u8>()).prop_map(
+            |(drawer, deadline_ms, round_index, total_rounds)| GameEvent::WordPickStarted {
+                drawer,
+                deadline_ms,
+                round_index,
+                total_rounds,
+            },
+        ),
+        arb_text(MAX_WORD_LEN).prop_map(|mask| GameEvent::HintReveal { mask }),
     ]
 }
 
@@ -225,6 +253,13 @@ fn arb_server_leaf_msg() -> impl Strategy<Value = ServerMsg> {
         (any::<u64>(), arb_game_event()).prop_map(|(seq, event)| ServerMsg::Game { seq, event }),
         any::<u32>().prop_map(|nonce| ServerMsg::Ping { nonce }),
         arb_bye_reason().prop_map(|reason| ServerMsg::Bye { reason }),
+        (
+            vec(arb_text(MAX_WORD_LEN), 0..=MAX_WORD_OPTIONS),
+            any::<u32>()
+        )
+            .prop_map(|(words, deadline_ms)| ServerMsg::WordOptions { words, deadline_ms },),
+        (arb_text(MAX_WORD_LEN), any::<u32>())
+            .prop_map(|(word, duration_ms)| ServerMsg::DrawerWord { word, duration_ms }),
     ]
 }
 
