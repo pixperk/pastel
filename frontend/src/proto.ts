@@ -1,0 +1,482 @@
+// TypeScript mirror of pastel-proto. Each type's variant order MUST match
+// the Rust enum declaration order in `pastel-proto/src/msg.rs` and
+// `pastel-proto/src/types.rs`. Variant indices are taken from declaration
+// position (0-based).
+
+import { Reader, Writer } from "./postcard";
+
+// --------- limits (kept in sync with pastel-proto/src/limits.rs) ----------
+
+export const ROOM_CODE_LEN = 6;
+export const MAX_NAME_LEN = 32;
+export const MAX_CHAT_LEN = 256;
+export const MAX_GUESS_LEN = 64;
+export const MAX_POINTS_PER_BATCH = 64;
+export const MAX_FRAME_BYTES = 64 * 1024;
+
+// --------- types ---------------------------------------------------------
+
+export type RoomCode = string; // canonical uppercase 6-char string
+
+const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+export function parseRoomCode(s: string): RoomCode {
+  if (s.length !== ROOM_CODE_LEN) {
+    throw new Error(`room code must be ${ROOM_CODE_LEN} chars, got ${s.length}`);
+  }
+  let out = "";
+  for (const ch of s.toUpperCase()) {
+    let c = ch;
+    if (c === "I" || c === "L") c = "1";
+    else if (c === "O") c = "0";
+    else if (c === "U") c = "V";
+    if (!ALPHABET.includes(c)) {
+      throw new Error(`invalid room-code char: '${ch}'`);
+    }
+    out += c;
+  }
+  return out;
+}
+
+function writeRoomCode(w: Writer, code: RoomCode): void {
+  const bytes = new TextEncoder().encode(code);
+  if (bytes.length !== ROOM_CODE_LEN) {
+    throw new Error(`room code wrong length: ${bytes.length}`);
+  }
+  w.fixedBytes(bytes);
+}
+
+function readRoomCode(r: Reader): RoomCode {
+  const bytes = r.fixedBytes(ROOM_CODE_LEN);
+  return new TextDecoder().decode(bytes);
+}
+
+export interface Point {
+  dx: number; // i8
+  dy: number; // i8
+  dt: number; // u8
+  pressure: number; // u8
+}
+
+function writePoint(w: Writer, p: Point): void {
+  w.i8(p.dx).i8(p.dy).u8(p.dt).u8(p.pressure);
+}
+
+function readPoint(r: Reader): Point {
+  return { dx: r.i8(), dy: r.i8(), dt: r.u8(), pressure: r.u8() };
+}
+
+export interface Player {
+  id: number; // u32
+  name: string;
+}
+
+function writePlayer(w: Writer, p: Player): void {
+  w.varint(p.id).str(p.name);
+}
+
+function readPlayer(r: Reader): Player {
+  return { id: r.varint(), name: r.str() };
+}
+
+export interface CompletedStroke {
+  player: number;
+  stroke_id: number;
+  origin: [number, number];
+  points: Point[];
+}
+
+function writeCompletedStroke(w: Writer, s: CompletedStroke): void {
+  w.varint(s.player).varint(s.stroke_id);
+  w.varint(s.origin[0]).varint(s.origin[1]);
+  w.vec(s.points, writePoint);
+}
+
+function readCompletedStroke(r: Reader): CompletedStroke {
+  return {
+    player: r.varint(),
+    stroke_id: r.varint(),
+    origin: [r.varint(), r.varint()],
+    points: r.vec(readPoint),
+  };
+}
+
+export interface RoomSnapshot {
+  players: Player[];
+  completed: CompletedStroke[];
+  seq: number;
+}
+
+function writeSnapshot(w: Writer, s: RoomSnapshot): void {
+  w.vec(s.players, writePlayer);
+  w.vec(s.completed, writeCompletedStroke);
+  w.varint(s.seq);
+}
+
+function readSnapshot(r: Reader): RoomSnapshot {
+  return {
+    players: r.vec(readPlayer),
+    completed: r.vec(readCompletedStroke),
+    seq: r.varint(),
+  };
+}
+
+// --------- enums ---------------------------------------------------------
+
+export type GameAction =
+  | { kind: "Start" }
+  | { kind: "PickWord"; index: number }
+  | { kind: "Kick"; player: number };
+
+function writeGameAction(w: Writer, a: GameAction): void {
+  switch (a.kind) {
+    case "Start":
+      return void w.variant(0);
+    case "PickWord":
+      w.variant(1).u8(a.index);
+      return;
+    case "Kick":
+      w.variant(2).varint(a.player);
+      return;
+  }
+}
+
+function readGameAction(r: Reader): GameAction {
+  const v = r.variant();
+  switch (v) {
+    case 0:
+      return { kind: "Start" };
+    case 1:
+      return { kind: "PickWord", index: r.u8() };
+    case 2:
+      return { kind: "Kick", player: r.varint() };
+    default:
+      throw new Error(`unknown GameAction variant: ${v}`);
+  }
+}
+
+export type GameEvent =
+  | { kind: "RoundStart"; drawer: number; word_mask: string; duration_ms: number }
+  | { kind: "RoundEnd"; word: string; scores: [number, number][] }
+  | { kind: "GameOver"; final_scores: [number, number][] };
+
+function writeScores(w: Writer, scores: [number, number][]): void {
+  w.varint(scores.length);
+  for (const [id, s] of scores) w.varint(id).varint(s);
+}
+
+function readScores(r: Reader): [number, number][] {
+  const n = r.varint();
+  const out: [number, number][] = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = [r.varint(), r.varint()];
+  return out;
+}
+
+function writeGameEvent(w: Writer, e: GameEvent): void {
+  switch (e.kind) {
+    case "RoundStart":
+      w.variant(0).varint(e.drawer).str(e.word_mask).varint(e.duration_ms);
+      return;
+    case "RoundEnd":
+      w.variant(1).str(e.word);
+      writeScores(w, e.scores);
+      return;
+    case "GameOver":
+      w.variant(2);
+      writeScores(w, e.final_scores);
+      return;
+  }
+}
+
+function readGameEvent(r: Reader): GameEvent {
+  const v = r.variant();
+  switch (v) {
+    case 0:
+      return {
+        kind: "RoundStart",
+        drawer: r.varint(),
+        word_mask: r.str(),
+        duration_ms: r.varint(),
+      };
+    case 1:
+      return { kind: "RoundEnd", word: r.str(), scores: readScores(r) };
+    case 2:
+      return { kind: "GameOver", final_scores: readScores(r) };
+    default:
+      throw new Error(`unknown GameEvent variant: ${v}`);
+  }
+}
+
+export type GuessKind = "Correct" | "Close";
+
+function writeGuessKind(w: Writer, k: GuessKind): void {
+  w.variant(k === "Correct" ? 0 : 1);
+}
+
+function readGuessKind(r: Reader): GuessKind {
+  const v = r.variant();
+  if (v === 0) return "Correct";
+  if (v === 1) return "Close";
+  throw new Error(`unknown GuessKind: ${v}`);
+}
+
+export type ByeReason =
+  | "Reconnect"
+  | "Kicked"
+  | "RoomClosed"
+  | "RoomFull"
+  | "BadFrame";
+
+const BYE_ORDER: ByeReason[] = [
+  "Reconnect",
+  "Kicked",
+  "RoomClosed",
+  "RoomFull",
+  "BadFrame",
+];
+
+function writeByeReason(w: Writer, r: ByeReason): void {
+  const idx = BYE_ORDER.indexOf(r);
+  if (idx < 0) throw new Error(`unknown ByeReason: ${r}`);
+  w.variant(idx);
+}
+
+function readByeReason(r: Reader): ByeReason {
+  const v = r.variant();
+  if (v < 0 || v >= BYE_ORDER.length) {
+    throw new Error(`unknown ByeReason variant: ${v}`);
+  }
+  return BYE_ORDER[v];
+}
+
+// --------- Hello ---------------------------------------------------------
+
+export interface Hello {
+  room: RoomCode;
+  name: string;
+  resume_from: number | null;
+}
+
+function writeHello(w: Writer, h: Hello): void {
+  writeRoomCode(w, h.room);
+  w.str(h.name);
+  w.option(h.resume_from, (ww, n) => ww.varint(n));
+}
+
+function readHello(r: Reader): Hello {
+  return {
+    room: readRoomCode(r),
+    name: r.str(),
+    resume_from: r.option((rr) => rr.varint()),
+  };
+}
+
+// --------- ClientMsg -----------------------------------------------------
+
+export type ClientMsg =
+  | { kind: "Hello"; hello: Hello }
+  | {
+      kind: "Stroke";
+      stroke_id: number;
+      origin: [number, number];
+      points: Point[];
+      finished: boolean;
+    }
+  | { kind: "Chat"; text: string }
+  | { kind: "Guess"; text: string }
+  | { kind: "Game"; action: GameAction }
+  | { kind: "Pong"; nonce: number };
+
+export function encodeClientMsg(msg: ClientMsg): Uint8Array<ArrayBuffer> {
+  const w = new Writer();
+  switch (msg.kind) {
+    case "Hello":
+      w.variant(0);
+      writeHello(w, msg.hello);
+      break;
+    case "Stroke":
+      w.variant(1)
+        .varint(msg.stroke_id)
+        .varint(msg.origin[0])
+        .varint(msg.origin[1])
+        .vec(msg.points, writePoint)
+        .bool(msg.finished);
+      break;
+    case "Chat":
+      w.variant(2).str(msg.text);
+      break;
+    case "Guess":
+      w.variant(3).str(msg.text);
+      break;
+    case "Game":
+      w.variant(4);
+      writeGameAction(w, msg.action);
+      break;
+    case "Pong":
+      w.variant(5).varint(msg.nonce);
+      break;
+  }
+  return w.bytes();
+}
+
+export function decodeClientMsg(bytes: Uint8Array): ClientMsg {
+  const r = new Reader(bytes);
+  const v = r.variant();
+  switch (v) {
+    case 0:
+      return { kind: "Hello", hello: readHello(r) };
+    case 1:
+      return {
+        kind: "Stroke",
+        stroke_id: r.varint(),
+        origin: [r.varint(), r.varint()],
+        points: r.vec(readPoint),
+        finished: r.bool(),
+      };
+    case 2:
+      return { kind: "Chat", text: r.str() };
+    case 3:
+      return { kind: "Guess", text: r.str() };
+    case 4:
+      return { kind: "Game", action: readGameAction(r) };
+    case 5:
+      return { kind: "Pong", nonce: r.varint() };
+    default:
+      throw new Error(`unknown ClientMsg variant: ${v}`);
+  }
+}
+
+// --------- ServerMsg -----------------------------------------------------
+
+export type ServerMsg =
+  | {
+      kind: "Welcome";
+      you: number;
+      snapshot: RoomSnapshot;
+      seq: number;
+      lk_token: string;
+    }
+  | { kind: "Resume"; events: ServerMsg[] }
+  | {
+      kind: "Stroke";
+      seq: number;
+      player: number;
+      stroke_id: number;
+      origin: [number, number];
+      points: Point[];
+      finished: boolean;
+    }
+  | { kind: "Chat"; seq: number; player: number; text: string }
+  | { kind: "Guess"; seq: number; player: number; guess: GuessKind }
+  | { kind: "Presence"; seq: number; joined: Player[]; left: number[] }
+  | { kind: "Game"; seq: number; event: GameEvent }
+  | { kind: "Ping"; nonce: number }
+  | { kind: "Bye"; reason: ByeReason };
+
+export function encodeServerMsg(msg: ServerMsg): Uint8Array<ArrayBuffer> {
+  const w = new Writer();
+  writeServerMsg(w, msg);
+  return w.bytes();
+}
+
+function writeServerMsg(w: Writer, msg: ServerMsg): void {
+  switch (msg.kind) {
+    case "Welcome":
+      w.variant(0).varint(msg.you);
+      writeSnapshot(w, msg.snapshot);
+      w.varint(msg.seq).str(msg.lk_token);
+      return;
+    case "Resume":
+      w.variant(1).vec(msg.events, (ww, e) => writeServerMsg(ww, e));
+      return;
+    case "Stroke":
+      w.variant(2)
+        .varint(msg.seq)
+        .varint(msg.player)
+        .varint(msg.stroke_id)
+        .varint(msg.origin[0])
+        .varint(msg.origin[1])
+        .vec(msg.points, writePoint)
+        .bool(msg.finished);
+      return;
+    case "Chat":
+      w.variant(3).varint(msg.seq).varint(msg.player).str(msg.text);
+      return;
+    case "Guess":
+      w.variant(4).varint(msg.seq).varint(msg.player);
+      writeGuessKind(w, msg.guess);
+      return;
+    case "Presence":
+      w.variant(5)
+        .varint(msg.seq)
+        .vec(msg.joined, writePlayer)
+        .vec(msg.left, (ww, n) => ww.varint(n));
+      return;
+    case "Game":
+      w.variant(6).varint(msg.seq);
+      writeGameEvent(w, msg.event);
+      return;
+    case "Ping":
+      w.variant(7).varint(msg.nonce);
+      return;
+    case "Bye":
+      w.variant(8);
+      writeByeReason(w, msg.reason);
+      return;
+  }
+}
+
+export function decodeServerMsg(bytes: Uint8Array): ServerMsg {
+  const r = new Reader(bytes);
+  return readServerMsg(r);
+}
+
+function readServerMsg(r: Reader): ServerMsg {
+  const v = r.variant();
+  switch (v) {
+    case 0:
+      return {
+        kind: "Welcome",
+        you: r.varint(),
+        snapshot: readSnapshot(r),
+        seq: r.varint(),
+        lk_token: r.str(),
+      };
+    case 1:
+      return { kind: "Resume", events: r.vec(readServerMsg) };
+    case 2:
+      return {
+        kind: "Stroke",
+        seq: r.varint(),
+        player: r.varint(),
+        stroke_id: r.varint(),
+        origin: [r.varint(), r.varint()],
+        points: r.vec(readPoint),
+        finished: r.bool(),
+      };
+    case 3:
+      return { kind: "Chat", seq: r.varint(), player: r.varint(), text: r.str() };
+    case 4:
+      return {
+        kind: "Guess",
+        seq: r.varint(),
+        player: r.varint(),
+        guess: readGuessKind(r),
+      };
+    case 5:
+      return {
+        kind: "Presence",
+        seq: r.varint(),
+        joined: r.vec(readPlayer),
+        left: r.vec((rr) => rr.varint()),
+      };
+    case 6:
+      return { kind: "Game", seq: r.varint(), event: readGameEvent(r) };
+    case 7:
+      return { kind: "Ping", nonce: r.varint() };
+    case 8:
+      return { kind: "Bye", reason: readByeReason(r) };
+    default:
+      throw new Error(`unknown ServerMsg variant: ${v}`);
+  }
+}
