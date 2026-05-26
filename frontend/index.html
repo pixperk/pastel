@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#fdfbf7" />
     <title>pastel</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -12,11 +13,16 @@
         <h1>pastel</h1>
         <div id="status" class="status">connecting…</div>
       </header>
-      <section class="stage">
-        <div id="toolbar"></div>
-        <canvas id="canvas"></canvas>
-      </section>
-      <aside id="players" class="players"></aside>
+      <div class="workspace">
+        <section class="stage">
+          <div id="toolbar"></div>
+          <canvas id="canvas"></canvas>
+        </section>
+        <aside class="sidebar">
+          <div id="players" class="players"></div>
+          <div id="chat"></div>
+        </aside>
+      </div>
     </main>
     <script type="module" src="./src/main.ts"></script>
   </body>
