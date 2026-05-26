@@ -1,0 +1,399 @@
+//! pastel-loadtest: drive N simulated WebSocket clients against a running
+//! pastel-server, measure RTT via self-echoed strokes, print a report.
+//!
+//! Each client connects, joins a room (clients are bucketed in groups of
+//! `per_room`), sends `rate` strokes per second for `duration` seconds, and
+//! records the time between sending a Stroke and seeing the broadcast come
+//! back from the server. The histogram is HdrHistogram-backed so the
+//! p50/p95/p99 numbers are real.
+//!
+//! No assumptions about the server beyond "it implements the pastel wire
+//! protocol on /ws/:code". Start the server in another terminal first.
+
+use anyhow::Result;
+use clap::Parser;
+use futures_util::{SinkExt, StreamExt};
+use hdrhistogram::Histogram;
+use pastel_proto::*;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
+
+#[derive(Parser, Debug)]
+#[command(about = "Drive simulated clients against a pastel-server.")]
+struct Args {
+    /// Base WebSocket address, e.g. ws://127.0.0.1:7070
+    #[arg(long, default_value = "ws://127.0.0.1:7070")]
+    addr: String,
+
+    /// Total number of simulated clients.
+    #[arg(short, long, default_value_t = 100)]
+    clients: usize,
+
+    /// Players per room. Clients are distributed across `ceil(clients/per_room)` rooms.
+    #[arg(long, default_value_t = 5)]
+    per_room: usize,
+
+    /// Duration of the steady-state phase, in seconds.
+    #[arg(short = 't', long, default_value_t = 30)]
+    duration: u64,
+
+    /// Strokes per second per client.
+    #[arg(long, default_value_t = 10)]
+    rate: u32,
+
+    /// Suppress the every-2-seconds progress lines.
+    #[arg(long)]
+    quiet: bool,
+}
+
+#[derive(Default)]
+struct Stats {
+    connected: AtomicU64,
+    failed_connect: AtomicU64,
+    sent: AtomicU64,
+    received_self: AtomicU64,
+    received_other: AtomicU64,
+    bad_frames: AtomicU64,
+    ws_errors: AtomicU64,
+}
+
+struct Shared {
+    stats: Stats,
+    global_hist: Mutex<Histogram<u64>>,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    let rooms_count = args.clients.div_ceil(args.per_room.max(1));
+    println!("pastel-loadtest");
+    println!("  target:    {}", args.addr);
+    println!(
+        "  clients:   {} across {} rooms ({} per room)",
+        args.clients, rooms_count, args.per_room
+    );
+    println!("  duration:  {}s", args.duration);
+    println!("  rate:      {} strokes/s per client", args.rate);
+    println!();
+
+    let shared = Arc::new(Shared {
+        stats: Stats::default(),
+        global_hist: Mutex::new(Histogram::<u64>::new(3).expect("histogram")),
+    });
+
+    let send_interval = if args.rate == 0 {
+        Duration::from_secs(3600)
+    } else {
+        Duration::from_micros(1_000_000 / args.rate as u64)
+    };
+    let test_duration = Duration::from_secs(args.duration);
+
+    // Stagger client startup over the first second so we don't slam connect().
+    let stagger = if args.clients > 0 {
+        Duration::from_millis((1000 / args.clients.max(1) as u64).max(1))
+    } else {
+        Duration::ZERO
+    };
+
+    let progress_handle = if !args.quiet {
+        Some(spawn_progress(shared.clone(), args.clients))
+    } else {
+        None
+    };
+
+    let mut client_handles = Vec::with_capacity(args.clients);
+    let test_started = Instant::now();
+    for i in 0..args.clients {
+        let url = format!(
+            "{}/ws/{}",
+            args.addr.trim_end_matches('/'),
+            room_for_index(i / args.per_room.max(1))
+        );
+        let name = format!("load-{i}");
+        let shared = shared.clone();
+        client_handles.push(tokio::spawn(async move {
+            let _ = run_client(url, name, test_duration, send_interval, shared).await;
+        }));
+        tokio::time::sleep(stagger).await;
+    }
+
+    for h in client_handles {
+        let _ = h.await;
+    }
+    let elapsed = test_started.elapsed();
+    if let Some(p) = progress_handle {
+        p.abort();
+    }
+
+    print_report(&shared, args, elapsed).await;
+    Ok(())
+}
+
+fn room_for_index(i: usize) -> String {
+    const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let mut bytes = [b'0'; 6];
+    let mut n = i;
+    for slot in bytes.iter_mut().rev() {
+        *slot = ALPHABET[n % 32];
+        n /= 32;
+    }
+    std::str::from_utf8(&bytes)
+        .expect("alphabet is ascii")
+        .to_string()
+}
+
+fn parse_room(url: &str) -> RoomCode {
+    let code = url.rsplit('/').next().expect("at least one segment");
+    RoomCode::parse(code).expect("loadtest-generated code is valid")
+}
+
+fn spawn_progress(shared: Arc<Shared>, total_clients: usize) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut last_sent = 0u64;
+        let mut last_received = 0u64;
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let sent = shared.stats.sent.load(Ordering::Relaxed);
+            let received_self = shared.stats.received_self.load(Ordering::Relaxed);
+            let received_other = shared.stats.received_other.load(Ordering::Relaxed);
+            let received = received_self + received_other;
+            let connected = shared.stats.connected.load(Ordering::Relaxed);
+            let ds = sent.saturating_sub(last_sent);
+            let dr = received.saturating_sub(last_received);
+            println!(
+                "  +2s  connected={}/{}  sent={}/s  recv={}/s",
+                connected,
+                total_clients,
+                ds / 2,
+                dr / 2,
+            );
+            last_sent = sent;
+            last_received = received;
+        }
+    })
+}
+
+async fn print_report(shared: &Shared, args: Args, elapsed: Duration) {
+    let stats = &shared.stats;
+    let hist = shared.global_hist.lock().await;
+    let sent = stats.sent.load(Ordering::Relaxed);
+    let recv_self = stats.received_self.load(Ordering::Relaxed);
+    let recv_other = stats.received_other.load(Ordering::Relaxed);
+    let received = recv_self + recv_other;
+    let target_total = (args.clients as u64) * (args.rate as u64) * args.duration;
+
+    println!();
+    println!("--- report ---");
+    println!("wall time:       {:.2}s", elapsed.as_secs_f64());
+    println!();
+    println!("connections");
+    println!("  attempted:     {}", args.clients);
+    println!(
+        "  established:   {} ({:.1}%)",
+        stats.connected.load(Ordering::Relaxed),
+        100.0 * stats.connected.load(Ordering::Relaxed) as f64 / args.clients.max(1) as f64
+    );
+    println!(
+        "  failed:        {}",
+        stats.failed_connect.load(Ordering::Relaxed)
+    );
+    println!();
+    println!("throughput");
+    println!(
+        "  strokes sent:  {:>10}  ({:.0}/s, target {})",
+        sent,
+        sent as f64 / elapsed.as_secs_f64().max(0.001),
+        target_total,
+    );
+    println!(
+        "  strokes recv:  {:>10}  ({:.0}/s, self={} other={})",
+        received,
+        received as f64 / elapsed.as_secs_f64().max(0.001),
+        recv_self,
+        recv_other,
+    );
+    if sent > 0 {
+        let fanout = received as f64 / sent as f64;
+        println!("  fanout ratio:  {fanout:.2}x");
+    }
+    println!();
+    println!("stroke RTT (send → self-echo)");
+    if !hist.is_empty() {
+        println!("  samples:       {}", hist.len());
+        println!("  min:           {:>7.2} ms", hist.min() as f64 / 1000.0);
+        println!(
+            "  p50:           {:>7.2} ms",
+            hist.value_at_quantile(0.50) as f64 / 1000.0
+        );
+        println!(
+            "  p95:           {:>7.2} ms",
+            hist.value_at_quantile(0.95) as f64 / 1000.0
+        );
+        println!(
+            "  p99:           {:>7.2} ms",
+            hist.value_at_quantile(0.99) as f64 / 1000.0
+        );
+        println!("  max:           {:>7.2} ms", hist.max() as f64 / 1000.0);
+    } else {
+        println!("  (no samples)");
+    }
+    println!();
+    println!("errors");
+    println!(
+        "  bad frames:    {}",
+        stats.bad_frames.load(Ordering::Relaxed)
+    );
+    println!(
+        "  ws errors:     {}",
+        stats.ws_errors.load(Ordering::Relaxed)
+    );
+}
+
+async fn run_client(
+    url: String,
+    name: String,
+    duration: Duration,
+    send_interval: Duration,
+    shared: Arc<Shared>,
+) -> Result<()> {
+    let (ws, _) = match tokio_tungstenite::connect_async(&url).await {
+        Ok(x) => x,
+        Err(_) => {
+            shared.stats.failed_connect.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+    };
+    shared.stats.connected.fetch_add(1, Ordering::Relaxed);
+
+    let (mut sink, mut stream) = ws.split();
+
+    // Send Hello.
+    let room = parse_room(&url);
+    let hello = ClientMsg::Hello(Hello {
+        room,
+        name,
+        resume_from: None,
+    });
+    if sink
+        .send(Message::Binary(encode(&hello).unwrap()))
+        .await
+        .is_err()
+    {
+        shared.stats.ws_errors.fetch_add(1, Ordering::Relaxed);
+        return Ok(());
+    }
+
+    // Read Welcome to learn our player id.
+    let you_id = loop {
+        let frame = match stream.next().await {
+            Some(Ok(f)) => f,
+            Some(Err(_)) => {
+                shared.stats.ws_errors.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+            None => return Ok(()),
+        };
+        let Message::Binary(bytes) = frame else {
+            continue;
+        };
+        match decode::<ServerMsg>(&bytes) {
+            Ok(ServerMsg::Welcome { you, .. }) => break you,
+            Ok(_) => continue,
+            Err(_) => {
+                shared.stats.bad_frames.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+        }
+    };
+
+    let mut send_times: HashMap<u32, Instant> = HashMap::new();
+    let mut local_hist = Histogram::<u64>::new(3).expect("histogram");
+    let started = Instant::now();
+    let mut next_send = started;
+    let mut stroke_id: u32 = 1;
+    let stop_at = started + duration;
+    let mut stop_recv_at: Option<Instant> = None;
+
+    loop {
+        let send_due = next_send.checked_duration_since(Instant::now()).is_none();
+        let now = Instant::now();
+        let want_send = now < stop_at && (send_due || next_send <= now);
+
+        if let Some(end) = stop_recv_at {
+            if now >= end {
+                break;
+            }
+        }
+
+        tokio::select! {
+            // Fair, NOT biased: with biased, the stream arm dominates because
+            // broadcasts keep arriving, and the send branch never gets to run.
+            msg = stream.next() => {
+                let frame = match msg {
+                    Some(Ok(f)) => f,
+                    Some(Err(_)) => {
+                        shared.stats.ws_errors.fetch_add(1, Ordering::Relaxed);
+                        break;
+                    }
+                    None => break,
+                };
+                if let Message::Binary(bytes) = frame {
+                    match decode::<ServerMsg>(&bytes) {
+                        Ok(ServerMsg::Stroke { player, stroke_id: sid, .. }) => {
+                            if player == you_id {
+                                if let Some(t) = send_times.remove(&sid) {
+                                    let dt = t.elapsed().as_micros() as u64;
+                                    let _ = local_hist.record(dt);
+                                    shared.stats.received_self.fetch_add(1, Ordering::Relaxed);
+                                }
+                            } else {
+                                shared.stats.received_other.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            shared.stats.bad_frames.fetch_add(1, Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(next_send)),
+                if want_send =>
+            {
+                send_times.insert(stroke_id, Instant::now());
+                let msg = ClientMsg::Stroke {
+                    stroke_id,
+                    origin: (100, 100),
+                    color: 0x000000,
+                    width: 4,
+                    points: vec![Point { dx: 1, dy: 1, dt: 16, pressure: 0 }],
+                    finished: false,
+                };
+                if sink.send(Message::Binary(encode(&msg).unwrap())).await.is_err() {
+                    shared.stats.ws_errors.fetch_add(1, Ordering::Relaxed);
+                    break;
+                }
+                shared.stats.sent.fetch_add(1, Ordering::Relaxed);
+                stroke_id = stroke_id.wrapping_add(1);
+                next_send = now + send_interval;
+
+                // Once we've sent everything we plan to, give the server a
+                // bit to echo before we tear the connection down.
+                if next_send >= stop_at && stop_recv_at.is_none() {
+                    stop_recv_at = Some(now + Duration::from_millis(500));
+                }
+            }
+        }
+    }
+
+    let mut global = shared.global_hist.lock().await;
+    let _ = global.add(&local_hist);
+    Ok(())
+}
