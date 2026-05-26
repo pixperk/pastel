@@ -122,6 +122,16 @@ function handleMessage(msg: ServerMsg): void {
       renderPlayers();
       surface.applySnapshot(msg);
       chat.clear();
+      // Replay chat history (capped server-side at the chat ring size) so
+      // joiners and reloads see what was said before.
+      for (const line of msg.snapshot.chat) {
+        chat.appendMessage(
+          nameOf(line.player),
+          line.text,
+          colorOf(line.player),
+          line.player === youId,
+        );
+      }
       chat.appendSystem(`joined room ${room}`);
       return;
     }

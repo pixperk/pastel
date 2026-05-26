@@ -85,6 +85,14 @@ pub fn validate_server(msg: &ServerMsg, depth: u8) -> Result<(), CodecError> {
                     MAX_POINTS_PER_BATCH * 16,
                 )?;
             }
+            check_len(
+                "welcome.snapshot.chat",
+                snapshot.chat.len(),
+                MAX_CHAT_HISTORY,
+            )?;
+            for line in &snapshot.chat {
+                check_len("chat_line.text", line.text.len(), MAX_CHAT_LEN)?;
+            }
         }
         ServerMsg::Resume { events } => {
             if depth >= MAX_RESUME_NESTING {

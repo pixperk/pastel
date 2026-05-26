@@ -67,16 +67,23 @@ fn arb_completed_stroke() -> impl Strategy<Value = CompletedStroke> {
         )
 }
 
+fn arb_chat_line() -> impl Strategy<Value = ChatLine> {
+    (any::<u64>(), any::<u32>(), arb_text(MAX_CHAT_LEN))
+        .prop_map(|(seq, player, text)| ChatLine { seq, player, text })
+}
+
 fn arb_snapshot() -> impl Strategy<Value = RoomSnapshot> {
     (
         vec(arb_player(), 0..=MAX_PLAYERS_PER_ROOM),
         vec(arb_completed_stroke(), 0..=PROPTEST_STROKES_PER_SNAPSHOT),
         any::<u64>(),
+        vec(arb_chat_line(), 0..=8),
     )
-        .prop_map(|(players, completed, seq)| RoomSnapshot {
+        .prop_map(|(players, completed, seq, chat)| RoomSnapshot {
             players,
             completed,
             seq,
+            chat,
         })
 }
 

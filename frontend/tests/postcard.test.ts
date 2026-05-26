@@ -151,13 +151,13 @@ describe("wire fixtures (must match Rust)", () => {
     const msg: ServerMsg = {
       kind: "Welcome",
       you: 1,
-      snapshot: { players: [], completed: [], seq: 0 },
+      snapshot: { players: [], completed: [], seq: 0, chat: [] },
       seq: 0,
       lk_token: "",
     };
-    // variant 0, you 1, players_len 0, completed_len 0, snap.seq 0, seq 0,
-    // lk_token_len 0
-    expect(hex(encodeServerMsg(msg))).toBe("00010000000000");
+    // variant 0, you 1, players_len 0, completed_len 0, snap.seq 0,
+    // chat_len 0, outer seq 0, lk_token_len 0
+    expect(hex(encodeServerMsg(msg))).toBe("0001000000000000");
     expect(decodeServerMsg(encodeServerMsg(msg))).toEqual(msg);
   });
 });
@@ -218,6 +218,7 @@ describe("client/server round-trips", () => {
           },
         ],
         seq: 3,
+        chat: [{ seq: 2, player: 1, text: "hi" }],
       },
       seq: 3,
       lk_token: "fake.jwt.token",

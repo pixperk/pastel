@@ -176,6 +176,15 @@ impl Room {
                 .collect(),
             completed: self.completed.iter().cloned().collect(),
             seq: self.seq,
+            chat: self
+                .chat
+                .iter()
+                .map(|(seq, player, text)| pastel_proto::ChatLine {
+                    seq: *seq,
+                    player: *player,
+                    text: text.clone(),
+                })
+                .collect(),
         }
     }
 

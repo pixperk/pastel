@@ -10,6 +10,7 @@ pub const MAX_WORD_LEN: usize = 64;
 
 pub const MAX_POINTS_PER_BATCH: usize = 64;
 pub const MAX_STROKES_PER_SNAPSHOT: usize = 1024;
+pub const MAX_CHAT_HISTORY: usize = 64;
 pub const MAX_RESUME_EVENTS: usize = 1024;
 pub const MAX_LK_TOKEN_LEN: usize = 1024;
 

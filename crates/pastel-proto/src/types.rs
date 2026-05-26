@@ -96,10 +96,18 @@ pub struct CompletedStroke {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatLine {
+    pub seq: Seq,
+    pub player: PlayerId,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoomSnapshot {
     pub players: Vec<Player>,
     pub completed: Vec<CompletedStroke>,
     pub seq: Seq,
+    pub chat: Vec<ChatLine>,
 }
 
 #[cfg(test)]

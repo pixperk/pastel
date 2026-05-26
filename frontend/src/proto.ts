@@ -106,16 +106,32 @@ function readCompletedStroke(r: Reader): CompletedStroke {
   };
 }
 
+export interface ChatLine {
+  seq: number;
+  player: number;
+  text: string;
+}
+
+function writeChatLine(w: Writer, c: ChatLine): void {
+  w.varint(c.seq).varint(c.player).str(c.text);
+}
+
+function readChatLine(r: Reader): ChatLine {
+  return { seq: r.varint(), player: r.varint(), text: r.str() };
+}
+
 export interface RoomSnapshot {
   players: Player[];
   completed: CompletedStroke[];
   seq: number;
+  chat: ChatLine[];
 }
 
 function writeSnapshot(w: Writer, s: RoomSnapshot): void {
   w.vec(s.players, writePlayer);
   w.vec(s.completed, writeCompletedStroke);
   w.varint(s.seq);
+  w.vec(s.chat, writeChatLine);
 }
 
 function readSnapshot(r: Reader): RoomSnapshot {
@@ -123,6 +139,7 @@ function readSnapshot(r: Reader): RoomSnapshot {
     players: r.vec(readPlayer),
     completed: r.vec(readCompletedStroke),
     seq: r.varint(),
+    chat: r.vec(readChatLine),
   };
 }
 

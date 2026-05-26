@@ -60,9 +60,12 @@ fn server_welcome_empty_snapshot_fixture() {
             players: vec![],
             completed: vec![],
             seq: 0,
+            chat: vec![],
         },
         seq: 0,
         lk_token: String::new(),
     };
-    assert_eq!(hex(&encode(&msg).unwrap()), "00010000000000");
+    // variant 0, you 1, players 0, completed 0, snap.seq 0, chat 0,
+    // outer seq 0, lk_token len 0
+    assert_eq!(hex(&encode(&msg).unwrap()), "0001000000000000");
 }
