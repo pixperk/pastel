@@ -153,6 +153,8 @@ async fn two_clients_exchange_strokes() {
         ClientMsg::Stroke {
             stroke_id: 1,
             origin: (10, 20),
+            color: 0xd62828,
+            width: 4,
             points: vec![Point {
                 dx: 1,
                 dy: 1,
@@ -170,11 +172,15 @@ async fn two_clients_exchange_strokes() {
             ServerMsg::Stroke {
                 player,
                 stroke_id,
+                color,
+                width,
                 points,
                 ..
             } => {
                 assert_eq!(player, alice_id);
                 assert_eq!(stroke_id, 1);
+                assert_eq!(color, 0xd62828);
+                assert_eq!(width, 4);
                 assert_eq!(points.len(), 1);
             }
             other => panic!("expected Stroke, got {other:?}"),
