@@ -101,10 +101,13 @@ async fn full_sprint_game_plays_to_game_over() {
     )
     .await;
 
-    // Step through every round.
+    // Sprint = 3 rounds; with 2 players each round has 2 turns, so 6 total.
+    let total_turns = 3 * 2;
     let mut last_drawer = None;
-    for expected_round in 0..3u8 {
-        // WordPickStarted broadcast.
+    for turn in 0..total_turns {
+        let expected_round = (turn / 2) as u8;
+        let _ = expected_round; // kept for future stricter asserts
+                                // WordPickStarted broadcast.
         let pick_msg = wait_broadcast_for(&mut alice.broadcast_rx, |m| {
             matches!(
                 m,
@@ -128,7 +131,7 @@ async fn full_sprint_game_plays_to_game_over() {
             } => (*drawer, *round_index, *total_rounds),
             other => panic!("expected WordPickStarted, got {other:?}"),
         };
-        assert_eq!(round_index, expected_round);
+        assert_eq!(round_index, expected_round, "turn {turn} round mismatch");
         assert_eq!(total_rounds, 3);
         last_drawer = Some(drawer);
 
