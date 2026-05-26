@@ -61,11 +61,13 @@ fn server_welcome_empty_snapshot_fixture() {
             completed: vec![],
             seq: 0,
             chat: vec![],
+            game: GameSnapshot::default(),
         },
         seq: 0,
         lk_token: String::new(),
     };
     // variant 0, you 1, players 0, completed 0, snap.seq 0, chat 0,
-    // outer seq 0, lk_token len 0
-    assert_eq!(hex(&encode(&msg).unwrap()), "0001000000000000");
+    // game.mode Standard=1, game.host None=0, game.scores 0,
+    // game.phase Lobby=0, outer seq 0, lk_token len 0
+    assert_eq!(hex(&encode(&msg).unwrap()), "000100000000010000000000");
 }

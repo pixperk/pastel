@@ -75,18 +75,70 @@ fn arb_chat_line() -> impl Strategy<Value = ChatLine> {
     })
 }
 
+fn arb_game_phase_snapshot() -> impl Strategy<Value = GamePhaseSnapshot> {
+    prop_oneof![
+        Just(GamePhaseSnapshot::Lobby),
+        (any::<u32>(), any::<u32>(), any::<u8>(), any::<u8>()).prop_map(
+            |(drawer, deadline_ms, round_index, total_rounds)| {
+                GamePhaseSnapshot::ChoosingWord {
+                    drawer,
+                    deadline_ms,
+                    round_index,
+                    total_rounds,
+                }
+            },
+        ),
+        (
+            any::<u32>(),
+            arb_text(MAX_WORD_LEN),
+            any::<u32>(),
+            any::<u8>(),
+            any::<u8>(),
+        )
+            .prop_map(|(drawer, mask, deadline_ms, round_index, total_rounds)| {
+                GamePhaseSnapshot::Drawing {
+                    drawer,
+                    mask,
+                    deadline_ms,
+                    round_index,
+                    total_rounds,
+                }
+            },),
+        (arb_text(MAX_WORD_LEN), any::<u32>())
+            .prop_map(|(word, deadline_ms)| { GamePhaseSnapshot::RoundEnd { word, deadline_ms } }),
+        Just(GamePhaseSnapshot::GameOver),
+    ]
+}
+
+fn arb_game_snapshot() -> impl Strategy<Value = GameSnapshot> {
+    (
+        arb_game_mode(),
+        proptest::option::of(any::<u32>()),
+        vec((any::<u32>(), any::<u32>()), 0..=MAX_PLAYERS_PER_ROOM),
+        arb_game_phase_snapshot(),
+    )
+        .prop_map(|(mode, host, scores, phase)| GameSnapshot {
+            mode,
+            host,
+            scores,
+            phase,
+        })
+}
+
 fn arb_snapshot() -> impl Strategy<Value = RoomSnapshot> {
     (
         vec(arb_player(), 0..=MAX_PLAYERS_PER_ROOM),
         vec(arb_completed_stroke(), 0..=PROPTEST_STROKES_PER_SNAPSHOT),
         any::<u64>(),
         vec(arb_chat_line(), 0..=8),
+        arb_game_snapshot(),
     )
-        .prop_map(|(players, completed, seq, chat)| RoomSnapshot {
+        .prop_map(|(players, completed, seq, chat, game)| RoomSnapshot {
             players,
             completed,
             seq,
             chat,
+            game,
         })
 }
 
