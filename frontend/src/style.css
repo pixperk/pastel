@@ -3,7 +3,9 @@
   --ink: #2a2a2e;
   --muted: #76767c;
   --line: #efeae1;
+  --accent: #2d3436;
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  --radius: 12px;
 }
 
 * {
@@ -16,8 +18,8 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -26,8 +28,8 @@ main {
   grid-template-columns: 1fr 220px;
   grid-template-rows: auto 1fr;
   gap: 16px;
-  padding: 24px;
-  max-width: 1280px;
+  padding: 20px;
+  max-width: 1320px;
   margin: 0 auto;
   min-height: 100%;
 }
@@ -51,27 +53,216 @@ h1 {
   font-size: 13px;
 }
 
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
 canvas {
   background: #ffffff;
-  border-radius: 12px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
   display: block;
   width: 100%;
-  height: auto;
-  max-width: 960px;
+  aspect-ratio: 16 / 10;
   cursor: crosshair;
+  touch-action: none;
+}
+
+.toolbar {
+  background: #ffffff;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.toolbar-row--swatches {
+  min-height: 36px;
+}
+
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.palette-group {
+  flex: 0 1 auto;
+}
+
+.tb-spacer {
+  flex: 1;
+}
+
+.tb-divider--vertical {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
+  margin: 4px 4px;
+}
+
+/* --- tool buttons (brushes + eraser) --- */
+
+.tool-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 8px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font: inherit;
+  color: var(--muted);
+  min-width: 44px;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.tool-btn:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.tool-btn[aria-pressed="true"] {
+  background: var(--ink);
+  color: #ffffff;
+}
+
+.tool-dot {
+  background: currentColor;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.tool-btn--eraser .tool-dot {
+  background: transparent;
+  border: 2px dashed currentColor;
+  box-sizing: border-box;
+}
+
+.tool-name {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+/* --- palette tabs (segmented control) --- */
+
+.palette-tabs {
+  display: inline-flex;
+  background: var(--line);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.palette-tab {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.palette-tab:hover {
+  color: var(--ink);
+}
+
+.palette-tab[aria-selected="true"] {
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* --- swatches --- */
+
+.swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.swatch-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 100ms ease-out, border-color 100ms ease-out;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08) inset;
+}
+
+.swatch-btn:hover {
+  transform: scale(1.12);
+}
+
+.swatch-btn[aria-pressed="true"] {
+  border-color: var(--ink);
+  transform: scale(1.05);
+}
+
+/* --- clear button --- */
+
+.clear-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #b54434;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.clear-btn:hover {
+  background: #fdecec;
+  border-color: #f1c7c7;
+}
+
+.clear-x {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .players {
   background: #ffffff;
-  border-radius: 12px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 16px;
   font-size: 13px;
+  align-self: start;
 }
 
 .players h2 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   margin: 0 0 12px 0;
   color: var(--muted);
@@ -108,7 +299,18 @@ canvas {
   main {
     grid-template-columns: 1fr;
   }
-  canvas {
-    max-width: 100%;
+  .toolbar-row {
+    flex-wrap: wrap;
+  }
+  .tb-spacer {
+    display: none;
+  }
+  .tool-btn {
+    min-width: 40px;
+    padding: 4px 6px;
+  }
+  .swatch-btn {
+    width: 26px;
+    height: 26px;
   }
 }
