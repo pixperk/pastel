@@ -120,11 +120,117 @@ function readChatLine(r: Reader): ChatLine {
   return { seq: r.varint(), player: r.varint(), text: r.str() };
 }
 
+export type GamePhaseSnapshot =
+  | { kind: "Lobby" }
+  | {
+      kind: "ChoosingWord";
+      drawer: number;
+      deadline_ms: number;
+      round_index: number;
+      total_rounds: number;
+    }
+  | {
+      kind: "Drawing";
+      drawer: number;
+      mask: string;
+      deadline_ms: number;
+      round_index: number;
+      total_rounds: number;
+    }
+  | { kind: "RoundEnd"; word: string; deadline_ms: number }
+  | { kind: "GameOver" };
+
+function writeGamePhaseSnapshot(w: Writer, p: GamePhaseSnapshot): void {
+  switch (p.kind) {
+    case "Lobby":
+      return void w.variant(0);
+    case "ChoosingWord":
+      w.variant(1)
+        .varint(p.drawer)
+        .varint(p.deadline_ms)
+        .u8(p.round_index)
+        .u8(p.total_rounds);
+      return;
+    case "Drawing":
+      w.variant(2)
+        .varint(p.drawer)
+        .str(p.mask)
+        .varint(p.deadline_ms)
+        .u8(p.round_index)
+        .u8(p.total_rounds);
+      return;
+    case "RoundEnd":
+      w.variant(3).str(p.word).varint(p.deadline_ms);
+      return;
+    case "GameOver":
+      return void w.variant(4);
+  }
+}
+
+function readGamePhaseSnapshot(r: Reader): GamePhaseSnapshot {
+  const v = r.variant();
+  switch (v) {
+    case 0:
+      return { kind: "Lobby" };
+    case 1:
+      return {
+        kind: "ChoosingWord",
+        drawer: r.varint(),
+        deadline_ms: r.varint(),
+        round_index: r.u8(),
+        total_rounds: r.u8(),
+      };
+    case 2:
+      return {
+        kind: "Drawing",
+        drawer: r.varint(),
+        mask: r.str(),
+        deadline_ms: r.varint(),
+        round_index: r.u8(),
+        total_rounds: r.u8(),
+      };
+    case 3:
+      return { kind: "RoundEnd", word: r.str(), deadline_ms: r.varint() };
+    case 4:
+      return { kind: "GameOver" };
+    default:
+      throw new Error(`unknown GamePhaseSnapshot variant: ${v}`);
+  }
+}
+
+export interface GameSnapshot {
+  mode: GameMode;
+  host: number | null;
+  scores: [number, number][];
+  phase: GamePhaseSnapshot;
+}
+
+function writeGameSnapshot(w: Writer, s: GameSnapshot): void {
+  writeGameMode(w, s.mode);
+  w.option(s.host, (ww, v) => ww.varint(v));
+  writeScores(w, s.scores);
+  writeGamePhaseSnapshot(w, s.phase);
+}
+
+function readGameSnapshot(r: Reader): GameSnapshot {
+  return {
+    mode: readGameMode(r),
+    host: r.option((rr) => rr.varint()),
+    scores: readScores(r),
+    phase: readGamePhaseSnapshot(r),
+  };
+}
+
+export function emptyGameSnapshot(): GameSnapshot {
+  return { mode: "Standard", host: null, scores: [], phase: { kind: "Lobby" } };
+}
+
 export interface RoomSnapshot {
   players: Player[];
   completed: CompletedStroke[];
   seq: number;
   chat: ChatLine[];
+  game: GameSnapshot;
 }
 
 function writeSnapshot(w: Writer, s: RoomSnapshot): void {
@@ -132,6 +238,7 @@ function writeSnapshot(w: Writer, s: RoomSnapshot): void {
   w.vec(s.completed, writeCompletedStroke);
   w.varint(s.seq);
   w.vec(s.chat, writeChatLine);
+  writeGameSnapshot(w, s.game);
 }
 
 function readSnapshot(r: Reader): RoomSnapshot {
@@ -140,6 +247,7 @@ function readSnapshot(r: Reader): RoomSnapshot {
     completed: r.vec(readCompletedStroke),
     seq: r.varint(),
     chat: r.vec(readChatLine),
+    game: readGameSnapshot(r),
   };
 }
 
