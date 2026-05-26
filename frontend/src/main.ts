@@ -3,6 +3,7 @@ import { DrawingSurface } from "./canvas";
 import { mountChat, type ChatPanel } from "./chat";
 import { applyScores, emptyState, type GamePhase, type GameState } from "./game";
 import { mountGameUI } from "./gameUI";
+import { showLanding } from "./landing";
 import { rgbToCss } from "./palette";
 import {
   parseRoomCode,
@@ -12,6 +13,17 @@ import {
 } from "./proto";
 import { loadInitialColor, loadInitialTool, mountToolbar } from "./toolbar";
 import { Conn, type ConnState } from "./ws";
+
+// Show the landing screen if no room is in the URL. The landing form
+// redirects to ?room=CODE&host=1&mode=MODE on submit.
+const params = new URLSearchParams(window.location.search);
+if (!params.has("room")) {
+  showLanding();
+} else {
+  bootRoom();
+}
+
+function bootRoom(): void {
 
 function pickRoomCode(): string {
   const params = new URLSearchParams(window.location.search);
@@ -80,6 +92,14 @@ let youId: number | null = null;
 
 const gameState: GameState = emptyState();
 
+// The server's unicast (WordOptions, DrawerWord) is read by the connection
+// task BEFORE the broadcast (WordPickStarted, RoundStart) thanks to the
+// biased select on the server. So the drawer routinely sees the unicast
+// before the broadcast. Stash whichever arrives first and merge it into the
+// phase whenever the matching broadcast lands.
+let pendingWordOptions: string[] | null = null;
+let pendingDrawerWord: string | null = null;
+
 function nameOf(id: number, fallback = "anon"): string {
   return players.get(id)?.name ?? fallback;
 }
@@ -143,7 +163,11 @@ const wsUrl = (() => {
 })();
 
 function renderGameUI(): void {
-  gameUI.render(gameState.phase, youId, (id) => nameOf(id));
+  gameUI.render(gameState.phase, {
+    you: youId,
+    host: gameState.host,
+    nameOf: (id) => nameOf(id),
+  });
   updateBanner();
 }
 
@@ -155,14 +179,19 @@ function updateBanner(): void {
   }
   bannerEl.classList.remove("banner--hidden");
   const text = gameUI.bannerText(phase) ?? "";
-  const round =
-    phase.kind === "Drawing" || phase.kind === "ChoosingWord"
-      ? `Round ${phase.roundIndex + 1}/${phase.totalRounds}`
-      : "";
+  const round = `Round ${phase.roundIndex + 1}/${phase.totalRounds}`;
+  const isDrawing = phase.kind === "Drawing";
+  const isDrawer = isDrawing && phase.drawer === youId;
+  const hint = isDrawing && !isDrawer
+    ? `<div class="banner-hint">${escapeHtml(nameOf(phase.drawer))} is drawing · you can scribble locally, only you see it</div>`
+    : "";
   bannerEl.innerHTML = `
-    <div class="banner-round">${escapeHtml(round)}</div>
-    <div class="banner-mask">${escapeHtml(text)}</div>
-    <div class="banner-timer" id="bannerTimer">--</div>
+    <div class="banner-main">
+      <div class="banner-round">${escapeHtml(round)}</div>
+      <div class="banner-mask">${escapeHtml(text)}</div>
+      <div class="banner-timer" id="bannerTimer">--</div>
+    </div>
+    ${hint}
   `;
 }
 
@@ -191,6 +220,47 @@ function startBannerTicker(): void {
   requestAnimationFrame(tick);
 }
 
+function applyGameSnapshot(snap: import("./proto").GameSnapshot): void {
+  gameState.host = snap.host;
+  gameState.scores.clear();
+  for (const [id, v] of snap.scores) gameState.scores.set(id, v);
+  switch (snap.phase.kind) {
+    case "Lobby":
+      gameState.phase = { kind: "Lobby" };
+      return;
+    case "ChoosingWord":
+      gameState.phase = {
+        kind: "ChoosingWord",
+        drawer: snap.phase.drawer,
+        deadline: performance.now() + snap.phase.deadline_ms,
+        roundIndex: snap.phase.round_index,
+        totalRounds: snap.phase.total_rounds,
+      };
+      return;
+    case "Drawing":
+      gameState.phase = {
+        kind: "Drawing",
+        drawer: snap.phase.drawer,
+        mask: snap.phase.mask,
+        deadline: performance.now() + snap.phase.deadline_ms,
+        durationMs: snap.phase.deadline_ms,
+        roundIndex: snap.phase.round_index,
+        totalRounds: snap.phase.total_rounds,
+      };
+      return;
+    case "RoundEnd":
+      gameState.phase = {
+        kind: "RoundEnd",
+        word: snap.phase.word,
+        scores: snap.scores,
+      };
+      return;
+    case "GameOver":
+      gameState.phase = { kind: "GameOver", finalScores: snap.scores };
+      return;
+  }
+}
+
 function handleMessage(msg: ServerMsg): void {
   switch (msg.kind) {
     case "Welcome": {
@@ -201,8 +271,7 @@ function handleMessage(msg: ServerMsg): void {
       for (const p of msg.snapshot.players) players.set(p.id, p);
       players.set(msg.you, { id: msg.you, name });
       for (const s of msg.snapshot.completed) playerColors.set(s.player, s.color);
-      gameState.phase = { kind: "Lobby" };
-      gameState.scores.clear();
+      applyGameSnapshot(msg.snapshot.game);
       renderPlayers();
       surface.applySnapshot(msg);
       chat.clear();
@@ -269,7 +338,7 @@ function handleMessage(msg: ServerMsg): void {
       handleGameEvent(msg.event);
       return;
     case "WordOptions": {
-      // Drawer only.
+      pendingWordOptions = msg.words;
       if (gameState.phase.kind === "ChoosingWord") {
         gameState.phase = { ...gameState.phase, myOptions: msg.words };
         renderGameUI();
@@ -277,6 +346,7 @@ function handleMessage(msg: ServerMsg): void {
       return;
     }
     case "DrawerWord": {
+      pendingDrawerWord = msg.word;
       if (gameState.phase.kind === "Drawing") {
         gameState.phase = { ...gameState.phase, myWord: msg.word };
         renderGameUI();
@@ -302,7 +372,14 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
         deadline,
         roundIndex: event.round_index,
         totalRounds: event.total_rounds,
+        myOptions:
+          event.drawer === youId && pendingWordOptions
+            ? pendingWordOptions
+            : undefined,
       };
+      // New round: any stashed DrawerWord from a previous round is stale.
+      pendingDrawerWord = null;
+      pendingWordOptions = null;
       surface.clear();
       chat.appendSystem(
         `Round ${event.round_index + 1}/${event.total_rounds}: ${nameOf(event.drawer)} is picking a word`,
@@ -316,11 +393,17 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
         kind: "Drawing",
         drawer: event.drawer,
         mask: event.word_mask,
+        myWord:
+          event.drawer === youId && pendingDrawerWord
+            ? pendingDrawerWord
+            : undefined,
         deadline,
         durationMs: event.duration_ms,
         roundIndex: event.round_index,
         totalRounds: event.total_rounds,
       };
+      pendingDrawerWord = null;
+      pendingWordOptions = null;
       renderGameUI();
       return;
     }
@@ -379,6 +462,7 @@ const conn = new Conn({
 
 surface.attachSender((msg) => conn.send(msg));
 
-// Avoid an unused-import lint when game.ts re-exports types we only use as
-// types at call sites.
-void (null as unknown as GamePhase);
+  // Avoid an unused-import lint when game.ts re-exports types we only use as
+  // types at call sites.
+  void (null as unknown as GamePhase);
+}
