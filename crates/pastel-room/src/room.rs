@@ -98,6 +98,8 @@ struct PlayerSlot {
 #[derive(Default)]
 struct InProgressStroke {
     origin: (u16, u16),
+    color: u32,
+    width: u8,
     points: Vec<Point>,
 }
 
@@ -255,23 +257,39 @@ impl Room {
             ClientMsg::Stroke {
                 stroke_id,
                 origin,
+                color,
+                width,
                 points,
                 finished,
-            } => self.handle_stroke(player, stroke_id, origin, points, finished),
+            } => self.handle_stroke(player, stroke_id, origin, color, width, points, finished),
             ClientMsg::Chat { text } => self.handle_chat(player, text),
             ClientMsg::Guess { text } => self.handle_guess(player, text),
+            ClientMsg::Game(GameAction::Clear) => self.handle_clear(player),
             ClientMsg::Hello(_) | ClientMsg::Game(_) | ClientMsg::Pong { .. } => {
                 // Hello is for connection setup, handled via RoomCmd::Join.
-                // Game actions and Pong land here in later phases.
+                // Other game actions land here in later phases.
             }
         }
     }
 
+    fn handle_clear(&mut self, player: PlayerId) {
+        self.completed.clear();
+        self.in_progress.clear();
+        let seq = self.next_seq();
+        self.broadcast(ServerMsg::Game {
+            seq,
+            event: GameEvent::Cleared { by: player },
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn handle_stroke(
         &mut self,
         player: PlayerId,
         stroke_id: u32,
         origin: (u16, u16),
+        color: u32,
+        width: u8,
         points: Vec<Point>,
         finished: bool,
     ) {
@@ -281,6 +299,8 @@ impl Room {
             .entry(key)
             .or_insert_with(|| InProgressStroke {
                 origin,
+                color,
+                width,
                 points: Vec::new(),
             });
         entry.points.extend_from_slice(&points);
@@ -291,6 +311,8 @@ impl Room {
                     player,
                     stroke_id,
                     origin: done.origin,
+                    color: done.color,
+                    width: done.width,
                     points: done.points,
                 });
                 while self.completed.len() > COMPLETED_STROKES_RING {
@@ -305,6 +327,8 @@ impl Room {
             player,
             stroke_id,
             origin,
+            color,
+            width,
             points,
             finished,
         });
