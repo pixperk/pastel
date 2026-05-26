@@ -129,11 +129,14 @@ describe("wire fixtures (must match Rust)", () => {
       kind: "Stroke",
       stroke_id: 7,
       origin: [0, 0],
+      color: 0,
+      width: 4,
       points: [{ dx: 1, dy: -2, dt: 16, pressure: 200 }],
       finished: false,
     };
-    // variant 1, stroke_id 7, origin 0 0, len 1, point [01 fe 10 c8], finished 0
-    expect(hex(encodeClientMsg(msg))).toBe("010700000101fe10c800");
+    // variant 1, stroke_id 7, origin 0 0, color 0, width 4, len 1,
+    // point [01 fe 10 c8], finished 0.
+    expect(hex(encodeClientMsg(msg))).toBe("0107000000040101fe10c800");
     const round = decodeClientMsg(encodeClientMsg(msg));
     expect(round).toEqual(msg);
   });
@@ -173,6 +176,8 @@ describe("client/server round-trips", () => {
       kind: "Stroke",
       stroke_id: 99,
       origin: [320, 240],
+      color: 0xd62828,
+      width: 4,
       points: Array.from({ length: 30 }, (_, i) => ({
         dx: ((i * 3) % 11) - 5,
         dy: ((i * 7) % 13) - 6,
@@ -207,6 +212,8 @@ describe("client/server round-trips", () => {
             player: 1,
             stroke_id: 1,
             origin: [10, 20],
+            color: 0xd62828,
+            width: 4,
             points: [{ dx: 1, dy: 1, dt: 16, pressure: 200 }],
           },
         ],
@@ -221,6 +228,8 @@ describe("client/server round-trips", () => {
       player: 2,
       stroke_id: 1,
       origin: [50, 60],
+      color: 0x2b6cb0,
+      width: 8,
       points: [{ dx: -1, dy: 2, dt: 16, pressure: 180 }],
       finished: true,
     },
