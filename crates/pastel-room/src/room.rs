@@ -146,6 +146,10 @@ struct GameState {
     rotation: Vec<PlayerId>,
     scores: AHashMap<PlayerId, u32>,
     phase: GamePhase,
+    /// Position within the current round's rotation, 0..rotation.len().
+    /// A "round" advances when every alive player has drawn once.
+    turn_in_round: u8,
+    host: Option<PlayerId>,
 }
 
 impl Default for GameState {
@@ -156,6 +160,8 @@ impl Default for GameState {
             rotation: Vec::new(),
             scores: AHashMap::new(),
             phase: GamePhase::Lobby,
+            turn_in_round: 0,
+            host: None,
         }
     }
 }
@@ -263,6 +269,55 @@ impl Room {
                     text: text.clone(),
                 })
                 .collect(),
+            game: self.game_snapshot(),
+        }
+    }
+
+    fn game_snapshot(&self) -> GameSnapshot {
+        let now = Instant::now();
+        let remaining_ms = |deadline: Instant| {
+            deadline
+                .checked_duration_since(now)
+                .unwrap_or_default()
+                .as_millis() as u32
+        };
+        let phase = match &self.game.phase {
+            GamePhase::Lobby => GamePhaseSnapshot::Lobby,
+            GamePhase::ChoosingWord {
+                drawer,
+                deadline,
+                round_index,
+                ..
+            } => GamePhaseSnapshot::ChoosingWord {
+                drawer: *drawer,
+                deadline_ms: remaining_ms(*deadline),
+                round_index: *round_index,
+                total_rounds: self.game.rounds,
+            },
+            GamePhase::Drawing {
+                drawer,
+                mask,
+                deadline,
+                round_index,
+                ..
+            } => GamePhaseSnapshot::Drawing {
+                drawer: *drawer,
+                mask: mask.clone(),
+                deadline_ms: remaining_ms(*deadline),
+                round_index: *round_index,
+                total_rounds: self.game.rounds,
+            },
+            GamePhase::RoundEnd { word, deadline, .. } => GamePhaseSnapshot::RoundEnd {
+                word: word.clone(),
+                deadline_ms: remaining_ms(*deadline),
+            },
+            GamePhase::GameOver => GamePhaseSnapshot::GameOver,
+        };
+        GameSnapshot {
+            mode: self.game.mode,
+            host: self.game.host,
+            scores: ranked_scores(&self.game.scores),
+            phase,
         }
     }
 
@@ -276,6 +331,12 @@ impl Room {
 
         let id = self.next_player_id;
         self.next_player_id = self.next_player_id.wrapping_add(1);
+
+        // First joiner becomes host. Host status only changes if the
+        // current host has left (see handle_leave).
+        if self.game.host.is_none() {
+            self.game.host = Some(id);
+        }
 
         let (uc_tx, uc_rx) = mpsc::channel(UNICAST_CAPACITY);
         let bc_rx = self.broadcast_tx.subscribe();
@@ -297,6 +358,13 @@ impl Room {
                 guess_bucket: TokenBucket::new(GUESS_BUCKET_CAPACITY, GUESS_REFILL_PER_SEC),
             },
         );
+
+        // Late joiners during an active game are appended to the rotation
+        // so they get a turn at the end of each remaining round.
+        if !matches!(self.game.phase, GamePhase::Lobby | GamePhase::GameOver) {
+            self.game.rotation.push(id);
+            self.game.scores.entry(id).or_insert(0);
+        }
 
         let _ = reply.send(Ok(JoinResult {
             you: id,
@@ -329,6 +397,12 @@ impl Room {
             _ => false,
         };
 
+        // Host transfer: if the host leaves, pass to the oldest remaining
+        // player (lowest PlayerId, since IDs increase monotonically).
+        if self.game.host == Some(player) {
+            self.game.host = self.players.keys().min().copied();
+        }
+
         let seq = self.next_seq();
         self.broadcast(ServerMsg::Presence {
             seq,
@@ -358,7 +432,7 @@ impl Room {
             } => self.handle_stroke(player, stroke_id, origin, color, width, points, finished),
             ClientMsg::Chat { text } => self.handle_chat(player, text),
             ClientMsg::Guess { text } => self.handle_guess(player, text),
-            ClientMsg::Game(GameAction::Start { mode }) => self.handle_start_game(mode),
+            ClientMsg::Game(GameAction::Start { mode }) => self.handle_start_game(player, mode),
             ClientMsg::Game(GameAction::PickWord(idx)) => self.handle_pick_word(player, idx),
             ClientMsg::Game(GameAction::Clear) => self.handle_clear(player),
             ClientMsg::Game(GameAction::Kick(_)) | ClientMsg::Hello(_) | ClientMsg::Pong { .. } => {
@@ -558,13 +632,19 @@ impl Room {
 
     // ---- game state machine ---------------------------------------------
 
-    fn handle_start_game(&mut self, mode: GameMode) {
+    fn handle_start_game(&mut self, sender: PlayerId, mode: GameMode) {
         if !matches!(self.game.phase, GamePhase::Lobby | GamePhase::GameOver) {
             return;
         }
         if self.players.len() < 2 {
-            tracing::debug!("ignoring Start: need at least 2 players");
+            tracing::debug!("ignoring Start: at least 2 players required");
             return;
+        }
+        if let Some(host) = self.game.host {
+            if host != sender {
+                tracing::debug!("ignoring Start: only host can start");
+                return;
+            }
         }
         if self.words.is_empty() {
             tracing::warn!("ignoring Start: word lists are empty");
@@ -572,28 +652,37 @@ impl Room {
         }
         let mut rotation: Vec<PlayerId> = self.players.keys().copied().collect();
         rotation.sort();
+        // Preserve host across game restarts.
+        let host = self.game.host;
         self.game = GameState {
             mode,
             rounds: mode.rounds(),
             rotation,
             scores: AHashMap::from_iter(self.players.keys().copied().map(|p| (p, 0u32))),
             phase: GamePhase::Lobby, // will be overwritten by start_choosing_round
+            turn_in_round: 0,
+            host,
         };
         self.start_choosing_round(0);
     }
 
     fn start_choosing_round(&mut self, round_index: u8) {
-        // Find next alive drawer.
-        let mut drawer = None;
+        // Pick the next alive drawer starting from turn_in_round, skipping
+        // dead slots. The found index becomes the new turn_in_round, so
+        // disconnects collapse without leaving holes in the schedule.
         let total = self.game.rotation.len();
         if total == 0 {
             self.end_game();
             return;
         }
+        let start = self.game.turn_in_round as usize;
+        let mut drawer = None;
         for offset in 0..total {
-            let candidate = self.game.rotation[(round_index as usize + offset) % total];
+            let idx = (start + offset) % total;
+            let candidate = self.game.rotation[idx];
             if self.players.contains_key(&candidate) {
                 drawer = Some(candidate);
+                self.game.turn_in_round = idx as u8;
                 break;
             }
         }
@@ -842,11 +931,21 @@ impl Room {
         let GamePhase::RoundEnd { round_index, .. } = self.game.phase else {
             return;
         };
-        let next = round_index as u16 + 1;
-        if next >= self.game.rounds as u16 {
+        let rotation_len = self.game.rotation.len();
+        if rotation_len == 0 {
             self.end_game();
+            return;
+        }
+        // Next turn within the current round, or roll over to the next round.
+        let next_turn = self.game.turn_in_round as usize + 1;
+        if next_turn < rotation_len {
+            self.game.turn_in_round = next_turn as u8;
+            self.start_choosing_round(round_index);
+        } else if (round_index as u16 + 1) < self.game.rounds as u16 {
+            self.game.turn_in_round = 0;
+            self.start_choosing_round(round_index + 1);
         } else {
-            self.start_choosing_round(next as u8);
+            self.end_game();
         }
     }
 
