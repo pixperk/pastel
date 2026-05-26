@@ -1,5 +1,5 @@
 use pastel_proto::*;
-use pastel_room::{spawn_room, JoinError, JoinResult, RoomHandle, MAX_PLAYERS_PER_ROOM};
+use pastel_room::{spawn_room, JoinError, JoinResult, RoomHandle, WordLists, MAX_PLAYERS_PER_ROOM};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver as BroadcastRx;
@@ -10,6 +10,10 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(200);
 
 fn code() -> RoomCode {
     RoomCode::parse(ROOM).unwrap()
+}
+
+fn spawn() -> RoomHandle {
+    spawn_room(code(), Arc::new(WordLists::test_fixture()))
 }
 
 fn hello(name: &str) -> Hello {
@@ -45,7 +49,7 @@ async fn expect_no_message(rx: &mut BroadcastRx<Arc<ServerMsg>>) {
 
 #[tokio::test]
 async fn join_returns_welcome_with_empty_snapshot() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut joined = join(&h, "alice").await;
 
     let welcome = next_unicast(&mut joined.unicast_rx).await;
@@ -64,7 +68,7 @@ async fn join_returns_welcome_with_empty_snapshot() {
 
 #[tokio::test]
 async fn second_joiner_sees_presence_for_first() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut a = join(&h, "alice").await;
     let _welcome_a = next_unicast(&mut a.unicast_rx).await;
 
@@ -92,7 +96,7 @@ async fn second_joiner_sees_presence_for_first() {
 
 #[tokio::test]
 async fn stroke_broadcasts_with_monotonic_seq() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut a = join(&h, "alice").await;
     let _ = next_unicast(&mut a.unicast_rx).await;
     let _ = next(&mut a.broadcast_rx).await; // presence
@@ -140,7 +144,7 @@ async fn stroke_broadcasts_with_monotonic_seq() {
 
 #[tokio::test]
 async fn chat_is_broadcast_to_all() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut a = join(&h, "alice").await;
     let mut b = join(&h, "bob").await;
     let _ = next_unicast(&mut a.unicast_rx).await;
@@ -163,7 +167,7 @@ async fn chat_is_broadcast_to_all() {
 
 #[tokio::test]
 async fn correct_guess_broadcasts_guess_event() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut a = join(&h, "alice").await; // drawer
     let mut b = join(&h, "bob").await; // guesser
     let _ = next_unicast(&mut a.unicast_rx).await;
@@ -194,7 +198,7 @@ async fn correct_guess_broadcasts_guess_event() {
 
 #[tokio::test]
 async fn wrong_guess_falls_through_to_chat() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut a = join(&h, "alice").await;
     let mut b = join(&h, "bob").await;
     let _ = next_unicast(&mut a.unicast_rx).await;
@@ -222,7 +226,7 @@ async fn wrong_guess_falls_through_to_chat() {
 
 #[tokio::test]
 async fn drawer_guess_is_ignored() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut a = join(&h, "alice").await;
     let _ = next_unicast(&mut a.unicast_rx).await;
     drain_presence(&mut a.broadcast_rx, 1).await;
@@ -241,7 +245,7 @@ async fn drawer_guess_is_ignored() {
 
 #[tokio::test]
 async fn eleventh_join_is_rejected() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut held = Vec::new();
     for i in 0..MAX_PLAYERS_PER_ROOM {
         held.push(join(&h, &format!("p{i}")).await);
@@ -256,7 +260,7 @@ async fn eleventh_join_is_rejected() {
 
 #[tokio::test]
 async fn leave_emits_presence() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut a = join(&h, "alice").await;
     let b = join(&h, "bob").await;
     let _ = next_unicast(&mut a.unicast_rx).await;
@@ -275,7 +279,7 @@ async fn leave_emits_presence() {
 
 #[tokio::test]
 async fn ten_players_thousand_strokes_arrive_ordered() {
-    let h = spawn_room(code());
+    let h = spawn();
     let mut players = Vec::with_capacity(10);
     for i in 0..10 {
         let mut j = join(&h, &format!("p{i}")).await;
