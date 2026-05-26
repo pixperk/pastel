@@ -1,21 +1,25 @@
-import type { ClientMsg, Point, ServerMsg } from "./proto";
+import { MAX_POINTS_PER_BATCH, type ClientMsg, type Point, type ServerMsg } from "./proto";
 
-// Pastel palette, one per player slot. Deterministic from player id.
-const PALETTE = ["#e88b9c", "#f1ac81", "#e8d272", "#86c8a3", "#8aa4e0"];
-
-const BASE_WIDTH = 4.5;
-const MIN_WIDTH = 1.5;
-const MAX_WIDTH = 7.5;
-const VELOCITY_DAMPING = 0.035;
+const LOGICAL_WIDTH = 960;
+const LOGICAL_HEIGHT = 600;
+const VELOCITY_FACTOR = 0.04;
+const WIDTH_SMOOTHING = 0.55;
+const MIN_WIDTH_FACTOR = 0.4;
+const MAX_WIDTH_FACTOR = 1.4;
 const JITTER_BUFFER_MS = 50;
 const BATCH_INTERVAL_MS = 16;
-const MAX_DELTA = 127; // i8
+const I8_MAX = 127;
+const I8_MIN = -128;
+
+const ERASER_COLOR = 0xffffff;
 
 interface StrokeRender {
   color: string;
-  prevX: number; // last raw input point (control point for next curve)
+  baseWidth: number;
+  isEraser: boolean;
+  prevX: number;
   prevY: number;
-  drawnX: number; // last midpoint actually rendered
+  drawnX: number;
   drawnY: number;
   prevT: number;
   width: number;
@@ -25,10 +29,13 @@ interface LocalStroke {
   strokeId: number;
   originX: number;
   originY: number;
-  lastX: number; // last point sent (delta base)
+  lastX: number;
   lastY: number;
   lastT: number;
-  pending: Point[]; // unsent points
+  color: number;
+  baseWidth: number;
+  pending: Point[];
+  allPoints: Point[]; // every emitted delta for later resize replays
   render: StrokeRender;
   pointerId: number;
 }
@@ -37,7 +44,6 @@ interface RemotePointBuffered {
   absX: number;
   absY: number;
   dt: number;
-  pressure: number;
   arrivedAt: number;
   finished: boolean;
 }
@@ -46,36 +52,54 @@ interface RemoteStroke {
   player: number;
   strokeId: number;
   buffered: RemotePointBuffered[];
-  render: StrokeRender | null; // null until first point is drained
+  render: StrokeRender | null;
   finished: boolean;
   origin: [number, number];
+  color: number;
+  baseWidth: number;
   lastAbsX: number;
   lastAbsY: number;
+  allPoints: Point[]; // every received delta, for resize replays
+}
+
+interface CompletedRecord {
+  origin: [number, number];
+  color: number;
+  width: number;
+  points: Point[];
 }
 
 export class DrawingSurface {
   private ctx: CanvasRenderingContext2D;
   private nextStrokeId = 1;
-  private localStrokes = new Map<number, LocalStroke>(); // by pointerId
-  private remoteStrokes = new Map<string, RemoteStroke>(); // key: `${player}/${stroke_id}`
+  private localStrokes = new Map<number, LocalStroke>();
+  private remoteStrokes = new Map<string, RemoteStroke>();
   private youId: number | null = null;
   private sendBatched: ((msg: ClientMsg) => void) | null = null;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private currentColor = 0x2d3436;
+  private currentWidth = 4;
+  private dpr = 1;
+  private cssWidth = 0;
+  private cssHeight = 0;
+  private completedStrokes: CompletedRecord[] = [];
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2d canvas context unavailable");
     this.ctx = ctx;
-    this.ctx.lineCap = "round";
-    this.ctx.lineJoin = "round";
-    this.ctx.imageSmoothingEnabled = true;
 
+    canvas.style.touchAction = "none";
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
     canvas.addEventListener("pointerup", this.onPointerEnd);
     canvas.addEventListener("pointercancel", this.onPointerEnd);
     canvas.addEventListener("pointerleave", this.onPointerEnd);
-    canvas.style.touchAction = "none";
+
+    const ro = new ResizeObserver(() => this.resize());
+    ro.observe(canvas);
+    this.resize();
+    window.addEventListener("resize", () => this.resize());
 
     requestAnimationFrame(this.drainJitterBuffer);
   }
@@ -90,14 +114,61 @@ export class DrawingSurface {
     this.youId = id;
   }
 
-  clear(): void {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.remoteStrokes.clear();
+  setColor(rgb: number): void {
+    this.currentColor = rgb & 0xffffff;
   }
 
-  // Apply a remote ServerMsg::Stroke or replay completed strokes from snapshot.
-  handleStrokeMessage(player: number, strokeId: number, origin: [number, number], points: Point[], finished: boolean): void {
-    // Skip our own echoes; we rendered them locally already.
+  setWidth(width: number): void {
+    this.currentWidth = Math.max(1, Math.min(255, Math.round(width)));
+  }
+
+  clear(): void {
+    this.completedStrokes = [];
+    this.remoteStrokes.clear();
+    this.repaint();
+  }
+
+  private repaint(): void {
+    this.ctx.save();
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.restore();
+    this.applyTransform();
+    for (const rec of this.completedStrokes) {
+      this.paintRecord(rec);
+    }
+  }
+
+  private paintRecord(rec: CompletedRecord): void {
+    if (rec.points.length === 0) return;
+    const render = newRender(
+      rgbToCss(rec.color),
+      rec.width,
+      rec.origin[0],
+      rec.origin[1],
+      rec.color === ERASER_COLOR,
+    );
+    let curX = rec.origin[0];
+    let curY = rec.origin[1];
+    let curT = 0;
+    for (const p of rec.points) {
+      curX += p.dx;
+      curY += p.dy;
+      curT += p.dt;
+      drawSegment(this.ctx, render, curX, curY, curT);
+    }
+    finishStrokeAt(this.ctx, render, curX, curY);
+  }
+
+  handleStrokeMessage(
+    player: number,
+    strokeId: number,
+    origin: [number, number],
+    color: number,
+    width: number,
+    points: Point[],
+    finished: boolean,
+  ): void {
     if (this.youId !== null && player === this.youId) return;
 
     const key = `${player}/${strokeId}`;
@@ -110,8 +181,11 @@ export class DrawingSurface {
         render: null,
         finished: false,
         origin,
+        color,
+        baseWidth: width,
         lastAbsX: origin[0],
         lastAbsY: origin[1],
+        allPoints: [],
       };
       this.remoteStrokes.set(key, stroke);
     }
@@ -120,11 +194,11 @@ export class DrawingSurface {
     for (const p of points) {
       stroke.lastAbsX += p.dx;
       stroke.lastAbsY += p.dy;
+      stroke.allPoints.push(p);
       stroke.buffered.push({
         absX: stroke.lastAbsX,
         absY: stroke.lastAbsY,
         dt: p.dt,
-        pressure: p.pressure,
         arrivedAt: now,
         finished: false,
       });
@@ -132,32 +206,19 @@ export class DrawingSurface {
     if (finished) {
       const last = stroke.buffered[stroke.buffered.length - 1];
       if (last) last.finished = true;
-      else stroke.finished = true; // empty batch with finished=true (rare)
+      else stroke.finished = true;
     }
   }
 
-  // Replay all strokes from a snapshot, instantly (no jitter buffer).
   applySnapshot(msg: ServerMsg & { kind: "Welcome" }): void {
-    this.clear();
-    for (const s of msg.snapshot.completed) {
-      this.drawSnapshotStroke(s.player, s.origin, s.points);
-    }
-  }
-
-  private drawSnapshotStroke(player: number, origin: [number, number], points: Point[]): void {
-    if (points.length === 0) return;
-    const render = newRender(colorFor(player), origin[0], origin[1], origin[0], origin[1]);
-    let curX = origin[0];
-    let curY = origin[1];
-    let curT = 0;
-    for (const p of points) {
-      curX += p.dx;
-      curY += p.dy;
-      curT += p.dt;
-      drawSegment(this.ctx, render, curX, curY, curT);
-    }
-    // close out the last segment to the actual final point
-    lineToFinal(this.ctx, render, curX, curY);
+    this.completedStrokes = msg.snapshot.completed.map((s) => ({
+      origin: s.origin,
+      color: s.color,
+      width: s.width,
+      points: s.points,
+    }));
+    this.remoteStrokes.clear();
+    this.repaint();
   }
 
   private drainJitterBuffer = (): void => {
@@ -170,7 +231,15 @@ export class DrawingSurface {
         this.applyRemotePoint(stroke, head);
       }
       if (stroke.finished && stroke.buffered.length === 0) {
-        if (stroke.render) lineToFinal(this.ctx, stroke.render, stroke.lastAbsX, stroke.lastAbsY);
+        if (stroke.render) {
+          finishStrokeAt(this.ctx, stroke.render, stroke.lastAbsX, stroke.lastAbsY);
+        }
+        this.completedStrokes.push({
+          origin: stroke.origin,
+          color: stroke.color,
+          width: stroke.baseWidth,
+          points: stroke.allPoints,
+        });
         this.remoteStrokes.delete(key);
       }
     }
@@ -179,12 +248,18 @@ export class DrawingSurface {
 
   private applyRemotePoint(stroke: RemoteStroke, p: RemotePointBuffered): void {
     if (!stroke.render) {
-      stroke.render = newRender(colorFor(stroke.player), stroke.origin[0], stroke.origin[1], p.absX, p.absY);
+      stroke.render = newRender(
+        rgbToCss(stroke.color),
+        stroke.baseWidth,
+        stroke.origin[0],
+        stroke.origin[1],
+        stroke.color === ERASER_COLOR,
+      );
     }
     drawSegment(this.ctx, stroke.render, p.absX, p.absY, stroke.render.prevT + p.dt);
     if (p.finished) {
       stroke.finished = true;
-      lineToFinal(this.ctx, stroke.render, p.absX, p.absY);
+      finishStrokeAt(this.ctx, stroke.render, p.absX, p.absY);
     }
   }
 
@@ -192,11 +267,11 @@ export class DrawingSurface {
     if (!ev.isPrimary) return;
     if (this.localStrokes.has(ev.pointerId)) return;
     this.canvas.setPointerCapture(ev.pointerId);
-    const x = ev.offsetX;
-    const y = ev.offsetY;
+    const { x, y } = this.toLogical(ev);
     const t = performance.now();
     const strokeId = this.nextStrokeId++;
-    const color = this.youId !== null ? colorFor(this.youId) : PALETTE[0];
+    const color = this.currentColor;
+    const width = this.currentWidth;
     const stroke: LocalStroke = {
       strokeId,
       originX: x,
@@ -204,8 +279,11 @@ export class DrawingSurface {
       lastX: x,
       lastY: y,
       lastT: t,
+      color,
+      baseWidth: width,
       pending: [],
-      render: newRender(color, x, y, x, y),
+      allPoints: [],
+      render: newRender(rgbToCss(color), width, x, y, color === ERASER_COLOR),
       pointerId: ev.pointerId,
     };
     this.localStrokes.set(ev.pointerId, stroke);
@@ -214,12 +292,12 @@ export class DrawingSurface {
   private onPointerMove = (ev: PointerEvent): void => {
     const stroke = this.localStrokes.get(ev.pointerId);
     if (!stroke) return;
-
-    const events = typeof ev.getCoalescedEvents === "function"
-      ? ev.getCoalescedEvents()
-      : [ev];
-    for (const e of events.length > 0 ? events : [ev]) {
-      this.consumeLocalPoint(stroke, e.offsetX, e.offsetY);
+    const coalesced =
+      typeof ev.getCoalescedEvents === "function" ? ev.getCoalescedEvents() : [];
+    const events = coalesced.length > 0 ? coalesced : [ev];
+    for (const e of events) {
+      const { x, y } = this.toLogical(e);
+      this.consumeLocalPoint(stroke, x, y);
     }
   };
 
@@ -228,40 +306,57 @@ export class DrawingSurface {
     if (!stroke) return;
     this.localStrokes.delete(ev.pointerId);
 
-    // Force-flush remaining points with finished=true.
     if (this.sendBatched) {
+      // Chunk to respect MAX_POINTS_PER_BATCH on the wire. The last chunk
+      // carries finished=true; preceding chunks (if any) are unfinished.
+      while (stroke.pending.length > MAX_POINTS_PER_BATCH) {
+        const batch = stroke.pending.splice(0, MAX_POINTS_PER_BATCH);
+        this.sendBatched({
+          kind: "Stroke",
+          stroke_id: stroke.strokeId,
+          origin: [Math.round(stroke.originX), Math.round(stroke.originY)],
+          color: stroke.color,
+          width: stroke.baseWidth,
+          points: batch,
+          finished: false,
+        });
+      }
       this.sendBatched({
         kind: "Stroke",
         stroke_id: stroke.strokeId,
-        origin: [stroke.originX, stroke.originY],
+        origin: [Math.round(stroke.originX), Math.round(stroke.originY)],
+        color: stroke.color,
+        width: stroke.baseWidth,
         points: stroke.pending,
         finished: true,
       });
       stroke.pending = [];
     }
 
-    lineToFinal(this.ctx, stroke.render, stroke.lastX, stroke.lastY);
+    finishStrokeAt(this.ctx, stroke.render, stroke.lastX, stroke.lastY);
+    this.completedStrokes.push({
+      origin: [Math.round(stroke.originX), Math.round(stroke.originY)],
+      color: stroke.color,
+      width: stroke.baseWidth,
+      points: stroke.allPoints,
+    });
   };
 
   private consumeLocalPoint(stroke: LocalStroke, x: number, y: number): void {
     const t = performance.now();
     let dx = Math.round(x - stroke.lastX);
     let dy = Math.round(y - stroke.lastY);
-    let dt = Math.min(255, Math.max(0, Math.round(t - stroke.lastT)));
-
-    // Skip duplicate sub-pixel events.
+    const dt = Math.min(255, Math.max(0, Math.round(t - stroke.lastT)));
     if (dx === 0 && dy === 0 && stroke.pending.length > 0) return;
-
-    // Clamp to i8 range, dropping excess delta (rare).
-    if (dx > MAX_DELTA) dx = MAX_DELTA;
-    else if (dx < -MAX_DELTA - 1) dx = -MAX_DELTA - 1;
-    if (dy > MAX_DELTA) dy = MAX_DELTA;
-    else if (dy < -MAX_DELTA - 1) dy = -MAX_DELTA - 1;
+    dx = clamp(dx, I8_MIN, I8_MAX);
+    dy = clamp(dy, I8_MIN, I8_MAX);
 
     const absX = stroke.lastX + dx;
     const absY = stroke.lastY + dy;
 
-    stroke.pending.push({ dx, dy, dt, pressure: 0 });
+    const point: Point = { dx, dy, dt, pressure: 0 };
+    stroke.pending.push(point);
+    stroke.allPoints.push(point);
     drawSegment(this.ctx, stroke.render, absX, absY, stroke.render.prevT + dt);
 
     stroke.lastX = absX;
@@ -272,48 +367,116 @@ export class DrawingSurface {
   private flushPending = (): void => {
     if (!this.sendBatched) return;
     for (const stroke of this.localStrokes.values()) {
-      if (stroke.pending.length === 0) continue;
-      this.sendBatched({
-        kind: "Stroke",
-        stroke_id: stroke.strokeId,
-        origin: [stroke.originX, stroke.originY],
-        points: stroke.pending,
-        finished: false,
-      });
-      stroke.pending = [];
+      while (stroke.pending.length > 0) {
+        const batch = stroke.pending.splice(0, MAX_POINTS_PER_BATCH);
+        this.sendBatched({
+          kind: "Stroke",
+          stroke_id: stroke.strokeId,
+          origin: [Math.round(stroke.originX), Math.round(stroke.originY)],
+          color: stroke.color,
+          width: stroke.baseWidth,
+          points: batch,
+          finished: false,
+        });
+      }
     }
   };
+
+  private toLogical(ev: { clientX: number; clientY: number }): {
+    x: number;
+    y: number;
+  } {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = ((ev.clientX - rect.left) / rect.width) * LOGICAL_WIDTH;
+    const y = ((ev.clientY - rect.top) / rect.height) * LOGICAL_HEIGHT;
+    return { x, y };
+  }
+
+  private resize(): void {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    this.dpr = window.devicePixelRatio || 1;
+    if (rect.width === this.cssWidth && rect.height === this.cssHeight) return;
+    this.cssWidth = rect.width;
+    this.cssHeight = rect.height;
+    this.canvas.width = Math.round(rect.width * this.dpr);
+    this.canvas.height = Math.round(rect.height * this.dpr);
+    this.applyTransform();
+    this.repaint();
+  }
+
+  private applyTransform(): void {
+    // Map logical 960x600 space onto the DPI-scaled backing store, preserving
+    // aspect ratio with letterbox if the viewport aspect differs.
+    const scale = Math.min(
+      this.canvas.width / LOGICAL_WIDTH,
+      this.canvas.height / LOGICAL_HEIGHT,
+    );
+    const offsetX = (this.canvas.width - LOGICAL_WIDTH * scale) / 2;
+    const offsetY = (this.canvas.height - LOGICAL_HEIGHT * scale) / 2;
+    this.ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+    this.ctx.lineCap = "round";
+    this.ctx.lineJoin = "round";
+    this.ctx.imageSmoothingEnabled = true;
+  }
+
 }
 
-function newRender(color: string, originX: number, originY: number, prevX: number, prevY: number): StrokeRender {
+function newRender(
+  color: string,
+  baseWidth: number,
+  originX: number,
+  originY: number,
+  isEraser: boolean,
+): StrokeRender {
   return {
     color,
-    prevX,
-    prevY,
+    baseWidth,
+    isEraser,
+    prevX: originX,
+    prevY: originY,
     drawnX: originX,
     drawnY: originY,
     prevT: 0,
-    width: BASE_WIDTH,
+    width: baseWidth,
   };
 }
 
-function drawSegment(ctx: CanvasRenderingContext2D, render: StrokeRender, x: number, y: number, t: number): void {
+function drawSegment(
+  ctx: CanvasRenderingContext2D,
+  render: StrokeRender,
+  x: number,
+  y: number,
+  t: number,
+): void {
   const dt = Math.max(1, t - render.prevT);
   const dist = Math.hypot(x - render.prevX, y - render.prevY);
-  const speed = dist / dt; // px per ms
-  const target = clamp(BASE_WIDTH / (1 + speed * (1 / VELOCITY_DAMPING) * 0.04), MIN_WIDTH, MAX_WIDTH);
-  // smooth width changes
-  render.width = render.width * 0.6 + target * 0.4;
+  const speed = dist / dt;
+  const factor = clamp(
+    1 / (1 + speed * VELOCITY_FACTOR),
+    MIN_WIDTH_FACTOR,
+    MAX_WIDTH_FACTOR,
+  );
+  const target = render.baseWidth * factor;
+  // Eraser holds a constant width so its boundary stays predictable.
+  if (render.isEraser) {
+    render.width = render.baseWidth;
+  } else {
+    render.width = render.width * WIDTH_SMOOTHING + target * (1 - WIDTH_SMOOTHING);
+  }
 
   const midX = (render.prevX + x) / 2;
   const midY = (render.prevY + y) / 2;
 
+  ctx.save();
+  ctx.globalCompositeOperation = render.isEraser ? "destination-out" : "source-over";
   ctx.beginPath();
   ctx.moveTo(render.drawnX, render.drawnY);
   ctx.quadraticCurveTo(render.prevX, render.prevY, midX, midY);
   ctx.lineWidth = render.width;
   ctx.strokeStyle = render.color;
   ctx.stroke();
+  ctx.restore();
 
   render.drawnX = midX;
   render.drawnY = midY;
@@ -322,20 +485,31 @@ function drawSegment(ctx: CanvasRenderingContext2D, render: StrokeRender, x: num
   render.prevT = t;
 }
 
-function lineToFinal(ctx: CanvasRenderingContext2D, render: StrokeRender, x: number, y: number): void {
+function finishStrokeAt(
+  ctx: CanvasRenderingContext2D,
+  render: StrokeRender,
+  x: number,
+  y: number,
+): void {
   if (render.drawnX === x && render.drawnY === y) return;
+  ctx.save();
+  ctx.globalCompositeOperation = render.isEraser ? "destination-out" : "source-over";
   ctx.beginPath();
   ctx.moveTo(render.drawnX, render.drawnY);
   ctx.lineTo(x, y);
   ctx.lineWidth = render.width;
   ctx.strokeStyle = render.color;
   ctx.stroke();
+  ctx.restore();
   render.drawnX = x;
   render.drawnY = y;
 }
 
-function colorFor(playerId: number): string {
-  return PALETTE[playerId % PALETTE.length];
+function rgbToCss(rgb: number): string {
+  const r = (rgb >> 16) & 0xff;
+  const g = (rgb >> 8) & 0xff;
+  const b = rgb & 0xff;
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
