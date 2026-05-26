@@ -1,6 +1,4 @@
-//! pastel-server binary. Placeholder so the workspace builds.
-
-use axum::{routing::get, Router};
+use pastel_server::{build_router, AppState};
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -12,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let app = Router::new().route("/healthz", get(|| async { "ok" }));
+    let app = build_router(AppState::new());
 
     let addr: SocketAddr = "0.0.0.0:7070".parse()?;
     tracing::info!(%addr, "pastel-server listening");
