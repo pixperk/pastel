@@ -151,13 +151,25 @@ describe("wire fixtures (must match Rust)", () => {
     const msg: ServerMsg = {
       kind: "Welcome",
       you: 1,
-      snapshot: { players: [], completed: [], seq: 0, chat: [] },
+      snapshot: {
+        players: [],
+        completed: [],
+        seq: 0,
+        chat: [],
+        game: {
+          mode: "Standard",
+          host: null,
+          scores: [],
+          phase: { kind: "Lobby" },
+        },
+      },
       seq: 0,
       lk_token: "",
     };
-    // variant 0, you 1, players_len 0, completed_len 0, snap.seq 0,
-    // chat_len 0, outer seq 0, lk_token_len 0
-    expect(hex(encodeServerMsg(msg))).toBe("0001000000000000");
+    // variant 0, you 1, players 0, completed 0, snap.seq 0, chat 0,
+    // game.mode Standard=1, game.host None=0, game.scores 0,
+    // game.phase Lobby=0, outer seq 0, lk_token 0
+    expect(hex(encodeServerMsg(msg))).toBe("000100000000010000000000");
     expect(decodeServerMsg(encodeServerMsg(msg))).toEqual(msg);
   });
 });
@@ -219,6 +231,19 @@ describe("client/server round-trips", () => {
         ],
         seq: 3,
         chat: [{ seq: 2, player: 1, text: "hi" }],
+        game: {
+          mode: "Sprint",
+          host: 1,
+          scores: [[1, 100]],
+          phase: {
+            kind: "Drawing",
+            drawer: 1,
+            mask: "_____",
+            deadline_ms: 60000,
+            round_index: 0,
+            total_rounds: 3,
+          },
+        },
       },
       seq: 3,
       lk_token: "fake.jwt.token",
