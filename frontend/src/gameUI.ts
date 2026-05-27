@@ -55,19 +55,19 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
     const hostName = ctx.host !== null ? ctx.nameOf(ctx.host) : "the host";
     const startSection = isHost
       ? `<button type="button" class="lobby-start" ${canStart ? "" : "disabled"}>
-           Start game
+           Let's go!
          </button>
          ${
            ctx.playerCount < 2
-             ? '<p class="lobby-hint">Waiting for at least 2 players to join</p>'
-             : `<p class="lobby-hint">${ctx.playerCount} player${ctx.playerCount !== 1 ? "s" : ""} ready</p>`
+             ? '<p class="lobby-hint">Need at least 2 to play. Share the link!</p>'
+             : `<p class="lobby-hint">${ctx.playerCount} player${ctx.playerCount !== 1 ? "s" : ""} here. Ready when you are</p>`
          }`
-      : `<p class="lobby-waiting">Waiting for <strong>${escapeHtml(hostName)}</strong> to start</p>`;
+      : `<p class="lobby-waiting"><strong>${escapeHtml(hostName)}</strong> will kick things off soon</p>`;
 
     root.innerHTML = `
       <div class="overlay-card overlay-card--lobby">
         <div class="lobby-head">
-          <h2>Lobby</h2>
+          <h2>Waiting room</h2>
           <span class="lobby-mode-badge">${escapeHtml(ctx.modeBadge)}</span>
         </div>
         <div class="lobby-players">${avatarChips}</div>
@@ -75,7 +75,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
           ${startSection}
         </div>
         <div class="lobby-invite">
-          <button type="button" class="invite-secondary">Copy invite link</button>
+          <button type="button" class="invite-secondary">Share invite link</button>
         </div>
       </div>
     `;
@@ -92,7 +92,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
       btn.addEventListener("click", () => {
         ctx.onCopyInvite();
         const original = btn.textContent;
-        btn.textContent = "Link copied";
+        btn.textContent = "Copied!";
         btn.disabled = true;
         setTimeout(() => {
           btn.textContent = original;
@@ -122,12 +122,12 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
       root.innerHTML = `
         <div class="overlay-card overlay-card--wide">
           <div class="word-pick-head">
-            <span class="word-pick-eyebrow">Round ${phase.roundIndex + 1} of ${phase.totalRounds} · your turn</span>
-            <h2>Pick a word</h2>
+            <span class="word-pick-eyebrow">Round ${phase.roundIndex + 1} of ${phase.totalRounds} -- your turn to draw!</span>
+            <h2>What do you want to draw?</h2>
           </div>
           <div class="word-pick-grid">${cards}</div>
-          <p class="overlay-hint">Auto-picks the first if you take too long.</p>
-          <button type="button" class="invite-secondary">Copy invite link</button>
+          <p class="overlay-hint">Take too long and we'll pick for you.</p>
+          <button type="button" class="invite-secondary">Share invite link</button>
         </div>
       `;
       for (const btn of root.querySelectorAll<HTMLButtonElement>(".word-pick-card")) {
@@ -141,10 +141,10 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
         <div class="overlay-card">
           <div class="word-pick-head">
             <span class="word-pick-eyebrow">Round ${phase.roundIndex + 1} of ${phase.totalRounds}</span>
-            <h2>${escapeHtml(nameOf(phase.drawer))} is picking a word</h2>
+            <h2>${escapeHtml(nameOf(phase.drawer))} is choosing what to draw</h2>
           </div>
-          <p class="overlay-hint">Hang tight.</p>
-          <button type="button" class="invite-secondary">Copy invite link</button>
+          <p class="overlay-hint">Get your guessing hat on.</p>
+          <button type="button" class="invite-secondary">Share invite link</button>
         </div>
       `;
     }
@@ -168,7 +168,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
       .join("");
     root.innerHTML = `
       <div class="overlay-card">
-        <h2>The word was <em>${escapeHtml(phase.word)}</em></h2>
+        <h2>It was <em>${escapeHtml(phase.word)}</em>!</h2>
         <ul class="score-list">${rows}</ul>
       </div>
     `;
@@ -182,9 +182,9 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
     const all = phase.finalScores;
     const maxScore = Math.max(1, ...all.map(([, s]) => s));
     const abandoned = ctx.playerCount < 2;
-    const heading = abandoned ? "No one left to play with" : "Game over";
+    const heading = abandoned ? "Looks like everyone left" : "That's a wrap!";
     const subtext = abandoned
-      ? '<p class="gameover-sub">Everyone else left the room.</p>'
+      ? '<p class="gameover-sub">No worries. You can start a fresh room anytime.</p>'
       : "";
 
     const RANK_COLORS = ["#f5c6d0", "#d5c6e0", "#fce4b8", "#e0e0e0"];
@@ -210,7 +210,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
         <h2>${heading}</h2>
         ${subtext}
         <ol class="go-board">${rows}</ol>
-        <button type="button" class="rematch-btn">Play again</button>
+        <button type="button" class="rematch-btn">One more round?</button>
       </div>
     `;
     root
