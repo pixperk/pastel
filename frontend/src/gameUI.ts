@@ -179,30 +179,37 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
     ctx: RenderContext,
   ): void {
     visible();
-    const top = phase.finalScores.slice(0, 3);
-    const podium = top
-      .map(
-        ([id, score], i) =>
-          `<li class="podium-row podium-${i + 1}">
-             <span class="podium-rank">#${i + 1}</span>
-             <span class="podium-avatar">${ctx.avatarOf(id)}</span>
-             <span class="podium-name">${escapeHtml(ctx.nameOf(id))}</span>
-             <span class="podium-score">${score}</span>
-           </li>`,
-      )
-      .join("");
-    // If the game ended because everyone else bailed, say so plainly. The
-    // server doesn't send a reason, but we can infer from the room state.
+    const all = phase.finalScores;
+    const maxScore = Math.max(1, ...all.map(([, s]) => s));
     const abandoned = ctx.playerCount < 2;
     const heading = abandoned ? "No one left to play with" : "Game over";
     const subtext = abandoned
-      ? '<p class="overlay-hint">Everyone else left the room. Here are the points so far.</p>'
+      ? '<p class="gameover-sub">Everyone else left the room.</p>'
       : "";
+
+    const RANK_COLORS = ["#f5c6d0", "#d5c6e0", "#fce4b8", "#e0e0e0"];
+
+    const rows = all
+      .map(([id, score], i) => {
+        const pct = Math.max(12, (score / maxScore) * 100);
+        const bg = RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
+        return `<li class="go-row" style="--row-i: ${i};">
+          <span class="go-rank" style="background: ${bg};">${i + 1}</span>
+          <span class="go-avatar">${ctx.avatarOf(id)}</span>
+          <span class="go-name">${escapeHtml(ctx.nameOf(id))}</span>
+          <span class="go-bar-wrap">
+            <span class="go-bar" style="--bar-pct: ${pct}%; background: ${bg};"></span>
+          </span>
+          <span class="go-score">${score}</span>
+        </li>`;
+      })
+      .join("");
+
     root.innerHTML = `
-      <div class="overlay-card">
+      <div class="overlay-card overlay-card--gameover">
         <h2>${heading}</h2>
         ${subtext}
-        <ul class="podium">${podium}</ul>
+        <ol class="go-board">${rows}</ol>
         <button type="button" class="rematch-btn">Play again</button>
       </div>
     `;
