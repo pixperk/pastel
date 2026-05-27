@@ -3,6 +3,7 @@ import { Reader, Writer } from "../src/postcard";
 import {
   decodeClientMsg,
   decodeServerMsg,
+  DEFAULT_AVATAR,
   encodeClientMsg,
   encodeServerMsg,
   parseRoomCode,
@@ -183,6 +184,7 @@ describe("client/server round-trips", () => {
         name: "alice",
         resume_from: null,
         client_token: null,
+        avatar: DEFAULT_AVATAR,
       },
     },
     {
@@ -192,6 +194,15 @@ describe("client/server round-trips", () => {
         name: "bob",
         resume_from: 42,
         client_token: "tok-bob",
+        avatar: {
+          skin: 3,
+          hat: 2,
+          hair: 5,
+          eyes: 3,
+          mouth: 1,
+          specs: 4,
+          earrings: 2,
+        },
       },
     },
     {
@@ -228,7 +239,7 @@ describe("client/server round-trips", () => {
       kind: "Welcome",
       you: 5,
       snapshot: {
-        players: [{ id: 1, name: "alice" }],
+        players: [{ id: 1, name: "alice", avatar: DEFAULT_AVATAR }],
         completed: [
           {
             player: 1,
@@ -274,7 +285,7 @@ describe("client/server round-trips", () => {
     {
       kind: "Presence",
       seq: 7,
-      joined: [{ id: 4, name: "carol" }],
+      joined: [{ id: 4, name: "carol", avatar: DEFAULT_AVATAR }],
       left: [2],
     },
     {

@@ -66,17 +66,61 @@ function readPoint(r: Reader): Point {
   return { dx: r.i8(), dy: r.i8(), dt: r.u8(), pressure: r.u8() };
 }
 
+export interface Avatar {
+  skin: number;
+  hat: number;
+  hair: number;
+  eyes: number;
+  mouth: number;
+  specs: number;
+  earrings: number;
+}
+
+export const DEFAULT_AVATAR: Avatar = {
+  skin: 0,
+  hat: 0,
+  hair: 0,
+  eyes: 0,
+  mouth: 0,
+  specs: 0,
+  earrings: 0,
+};
+
+function writeAvatar(w: Writer, a: Avatar): void {
+  w.u8(a.skin)
+    .u8(a.hat)
+    .u8(a.hair)
+    .u8(a.eyes)
+    .u8(a.mouth)
+    .u8(a.specs)
+    .u8(a.earrings);
+}
+
+function readAvatar(r: Reader): Avatar {
+  return {
+    skin: r.u8(),
+    hat: r.u8(),
+    hair: r.u8(),
+    eyes: r.u8(),
+    mouth: r.u8(),
+    specs: r.u8(),
+    earrings: r.u8(),
+  };
+}
+
 export interface Player {
   id: number; // u32
   name: string;
+  avatar: Avatar;
 }
 
 function writePlayer(w: Writer, p: Player): void {
   w.varint(p.id).str(p.name);
+  writeAvatar(w, p.avatar);
 }
 
 function readPlayer(r: Reader): Player {
-  return { id: r.varint(), name: r.str() };
+  return { id: r.varint(), name: r.str(), avatar: readAvatar(r) };
 }
 
 export interface CompletedStroke {
@@ -511,6 +555,7 @@ export interface Hello {
   name: string;
   resume_from: number | null;
   client_token: string | null;
+  avatar: Avatar;
 }
 
 function writeHello(w: Writer, h: Hello): void {
@@ -518,6 +563,7 @@ function writeHello(w: Writer, h: Hello): void {
   w.str(h.name);
   w.option(h.resume_from, (ww, n) => ww.varint(n));
   w.option(h.client_token, (ww, s) => ww.str(s));
+  writeAvatar(w, h.avatar);
 }
 
 function readHello(r: Reader): Hello {
@@ -526,6 +572,7 @@ function readHello(r: Reader): Hello {
     name: r.str(),
     resume_from: r.option((rr) => rr.varint()),
     client_token: r.option((rr) => rr.str()),
+    avatar: readAvatar(r),
   };
 }
 
