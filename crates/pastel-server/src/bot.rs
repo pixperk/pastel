@@ -209,7 +209,7 @@ async fn run_bot(
         },
     };
 
-    let outcome = room.join(hello).await?;
+    let outcome = room.join_as_bot(hello).await?;
     let join = match outcome {
         JoinOutcome::Joined(j) => j,
         JoinOutcome::Pending { .. } => anyhow::bail!("bot got pending"),
@@ -250,6 +250,9 @@ async fn run_bot(
                         let word_lower = word.to_lowercase();
                         if let Some(drawing) = drawings.get(&word_lower) {
                             replay_drawing(&room, my_id, &drawing.strokes).await;
+                        } else {
+                            bot_chat(&room, my_id, "hmm this is a tough one".into()).await;
+                            replay_drawing(&room, my_id, &[]).await;
                         }
                     }
                     ServerMsg::Bye { .. } => break,
@@ -366,7 +369,33 @@ async fn run_bot(
     Ok(())
 }
 
+fn fallback_question_mark() -> Vec<Vec<(u8, u8)>> {
+    vec![
+        // The curve of the ?
+        vec![
+            (100, 80),
+            (110, 70),
+            (130, 65),
+            (150, 70),
+            (158, 80),
+            (158, 95),
+            (148, 110),
+            (128, 120),
+            (128, 140),
+        ],
+        // The dot
+        vec![(126, 160), (128, 162), (130, 160), (128, 158), (126, 160)],
+    ]
+}
+
 async fn replay_drawing(room: &RoomHandle, my_id: PlayerId, strokes: &[Vec<(u8, u8)>]) {
+    let fallback;
+    let strokes = if strokes.is_empty() {
+        fallback = fallback_question_mark();
+        &fallback
+    } else {
+        strokes
+    };
     let pad_x = 80.0_f32;
     let pad_y = 50.0_f32;
     let usable_w = 960.0 - pad_x * 2.0;

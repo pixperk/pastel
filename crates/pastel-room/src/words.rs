@@ -30,11 +30,33 @@ pub struct WordLists {
     easy: Vec<String>,
     medium: Vec<String>,
     hard: Vec<String>,
+    bot_easy: Vec<String>,
+    bot_medium: Vec<String>,
+    bot_hard: Vec<String>,
 }
 
 impl WordLists {
     pub fn new(easy: Vec<String>, medium: Vec<String>, hard: Vec<String>) -> Self {
-        Self { easy, medium, hard }
+        Self {
+            easy,
+            medium,
+            hard,
+            bot_easy: Vec::new(),
+            bot_medium: Vec::new(),
+            bot_hard: Vec::new(),
+        }
+    }
+
+    pub fn with_bot_words(
+        mut self,
+        bot_easy: Vec<String>,
+        bot_medium: Vec<String>,
+        bot_hard: Vec<String>,
+    ) -> Self {
+        self.bot_easy = bot_easy;
+        self.bot_medium = bot_medium;
+        self.bot_hard = bot_hard;
+        self
     }
 
     /// Build a tiny test pool so tests can exercise the round logic without
@@ -78,6 +100,24 @@ impl WordLists {
         let pool = self.pool(diff);
         if pool.is_empty() || count == 0 {
             return Vec::new();
+        }
+        let take = count.min(pool.len());
+        let mut rng = rand::thread_rng();
+        pool.choose_multiple(&mut rng, take).cloned().collect()
+    }
+
+    fn bot_pool(&self, diff: Difficulty) -> &[String] {
+        match diff {
+            Difficulty::Easy => &self.bot_easy,
+            Difficulty::Medium => &self.bot_medium,
+            Difficulty::Hard => &self.bot_hard,
+        }
+    }
+
+    pub fn sample_bot(&self, diff: Difficulty, count: usize) -> Vec<String> {
+        let pool = self.bot_pool(diff);
+        if pool.is_empty() {
+            return self.sample(diff, count);
         }
         let take = count.min(pool.len());
         let mut rng = rand::thread_rng();

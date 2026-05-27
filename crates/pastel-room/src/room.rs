@@ -25,6 +25,10 @@ pub enum RoomCmd {
         hello: Hello,
         reply: oneshot::Sender<Result<JoinOutcome, JoinError>>,
     },
+    JoinBot {
+        hello: Hello,
+        reply: oneshot::Sender<Result<JoinOutcome, JoinError>>,
+    },
     Leave {
         player: PlayerId,
     },
@@ -95,6 +99,15 @@ impl RoomHandle {
         let _ = self.cmd_tx.send(RoomCmd::Leave { player }).await;
     }
 
+    pub async fn join_as_bot(&self, hello: Hello) -> Result<JoinOutcome, JoinError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(RoomCmd::JoinBot { hello, reply: tx })
+            .await
+            .map_err(|_| JoinError::RoomClosed)?;
+        rx.await.map_err(|_| JoinError::RoomClosed)?
+    }
+
     pub async fn cancel_pending(&self, candidate: PlayerId) {
         let _ = self.cmd_tx.send(RoomCmd::CancelPending { candidate }).await;
     }
@@ -125,6 +138,7 @@ struct PlayerSlot {
     guess_bucket: TokenBucket,
     client_token: Option<String>,
     avatar: Avatar,
+    is_bot: bool,
 }
 
 struct PendingJoiner {
@@ -264,7 +278,8 @@ impl Room {
 
     fn handle_cmd(&mut self, cmd: RoomCmd) {
         match cmd {
-            RoomCmd::Join { hello, reply } => self.handle_join(hello, reply),
+            RoomCmd::Join { hello, reply } => self.handle_join(hello, reply, false),
+            RoomCmd::JoinBot { hello, reply } => self.handle_join(hello, reply, true),
             RoomCmd::Leave { player } => self.handle_leave(player),
             RoomCmd::CancelPending { candidate } => self.handle_cancel_pending(candidate),
             RoomCmd::FromClient { player, msg } => self.handle_client_msg(player, msg),
@@ -367,6 +382,7 @@ impl Room {
         &mut self,
         hello: Hello,
         reply: oneshot::Sender<Result<JoinOutcome, JoinError>>,
+        is_bot: bool,
     ) {
         if self.players.len() >= MAX_PLAYERS_PER_ROOM {
             let _ = reply.send(Err(JoinError::RoomFull));
@@ -407,7 +423,7 @@ impl Room {
             }
         }
 
-        let join = self.admit_player(id, hello.name, hello.client_token, hello.avatar);
+        let join = self.admit_player(id, hello.name, hello.client_token, hello.avatar, is_bot);
         let _ = reply.send(Ok(JoinOutcome::Joined(join)));
     }
 
@@ -420,6 +436,7 @@ impl Room {
         name: String,
         client_token: Option<String>,
         avatar: Avatar,
+        is_bot: bool,
     ) -> JoinResult {
         // First joiner becomes host. Host status only changes if the
         // current host has left (see handle_leave).
@@ -447,6 +464,7 @@ impl Room {
                 guess_bucket: TokenBucket::new(GUESS_BUCKET_CAPACITY, GUESS_REFILL_PER_SEC),
                 client_token,
                 avatar,
+                is_bot,
             },
         );
 
@@ -491,7 +509,7 @@ impl Room {
         };
         // They're back in good standing; clear their kick mark.
         self.kicked_tokens.remove(&pj.client_token);
-        let join = self.admit_player(candidate, pj.name, Some(pj.client_token), pj.avatar);
+        let join = self.admit_player(candidate, pj.name, Some(pj.client_token), pj.avatar, false);
         let _ = pj.reply_tx.send(ApprovalResult::Approved(join));
     }
 
@@ -894,7 +912,12 @@ impl Room {
 
         let diff = Difficulty::for_round(round_index);
         let count = self.game.mode.word_options() as usize;
-        let options = self.words.sample(diff, count);
+        let drawer_is_bot = self.players.get(&drawer).map_or(false, |s| s.is_bot);
+        let options = if drawer_is_bot {
+            self.words.sample_bot(diff, count)
+        } else {
+            self.words.sample(diff, count)
+        };
         if options.is_empty() {
             tracing::warn!("no words available for difficulty {diff:?}; ending game");
             self.end_game();
