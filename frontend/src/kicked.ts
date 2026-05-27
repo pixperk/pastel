@@ -39,6 +39,44 @@ export function showFatalScreen(reason: ByeReason): void {
   });
 }
 
+const PENDING_OVERLAY_ID = "joinPendingOverlay";
+
+/// Show a fixed-position waiting overlay while the host decides whether to
+/// readmit a previously-kicked player. Idempotent. Call [`hideJoinPendingScreen`]
+/// after the candidate is approved so the underlying UI is revealed again.
+export function showJoinPendingScreen(): void {
+  if (document.getElementById(PENDING_OVERLAY_ID)) return;
+  const overlay = document.createElement("div");
+  overlay.id = PENDING_OVERLAY_ID;
+  overlay.className = "kicked";
+  overlay.innerHTML = `
+    <section class="kicked-card">
+      <h1>Waiting for the host</h1>
+      <p class="kicked-body">
+        You were kicked from this room earlier, so the host has to let you
+        back in. Hang tight.
+      </p>
+      <div class="kicked-actions">
+        <button type="button" class="kicked-secondary" id="pendingHome">
+          Leave
+        </button>
+      </div>
+    </section>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("pendingHome")?.addEventListener("click", () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("room");
+    url.searchParams.delete("host");
+    url.searchParams.delete("mode");
+    window.location.href = url.toString();
+  });
+}
+
+export function hideJoinPendingScreen(): void {
+  document.getElementById(PENDING_OVERLAY_ID)?.remove();
+}
+
 function copyFor(reason: ByeReason): { heading: string; body: string } {
   switch (reason) {
     case "Kicked":

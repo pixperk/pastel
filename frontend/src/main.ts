@@ -3,7 +3,11 @@ import { DrawingSurface } from "./canvas";
 import { mountChat, type ChatPanel } from "./chat";
 import { applyScores, emptyState, type GamePhase, type GameState } from "./game";
 import { mountGameUI } from "./gameUI";
-import { showFatalScreen } from "./kicked";
+import {
+  hideJoinPendingScreen,
+  showFatalScreen,
+  showJoinPendingScreen,
+} from "./kicked";
 import { showLanding } from "./landing";
 import { rgbToCss } from "./palette";
 import {
@@ -46,6 +50,16 @@ function randomCode(): string {
   return out;
 }
 
+function pickClientToken(): string {
+  const key = "pastel.client_token";
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+  const tok = (window.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))
+    .toString();
+  window.localStorage.setItem(key, tok);
+  return tok;
+}
+
 function pickName(): string {
   const stored = window.localStorage.getItem("pastel.name");
   const prompt = stored
@@ -78,6 +92,7 @@ const overlayEl = document.getElementById("gameOverlay") as HTMLElement;
 
 const room = pickRoomCode();
 const name = pickName();
+const clientToken = pickClientToken();
 document.title = `pastel · ${room}`;
 
 const surface = new DrawingSurface(canvasEl);
@@ -89,6 +104,7 @@ surface.setWidth(initialTool.width);
 
 const players = new Map<number, Player>();
 const playerColors = new Map<number, number>();
+const pendingJoiners = new Map<number, string>();
 // Sticky names: once we've ever seen a PlayerId's name, we remember it
 // forever this session. Old chat messages and end-of-game podiums for
 // players who have since left still render with their real name.
@@ -139,6 +155,24 @@ function renderPlayers(): void {
       ${youTag}${hostTag}${scoreTag}${kickBtn}
     </li>`;
   });
+  const pendingItems =
+    youAreHost && pendingJoiners.size > 0
+      ? Array.from(pendingJoiners.entries())
+          .map(
+            ([id, n]) => `<li class="pending-row">
+              <span class="pending-name">${escapeHtml(n)}</span>
+              <span class="pending-tag">wants to rejoin</span>
+              <span class="pending-actions">
+                <button class="pending-approve" data-target="${id}">Approve</button>
+                <button class="pending-reject" data-target="${id}">Reject</button>
+              </span>
+            </li>`,
+          )
+          .join("")
+      : "";
+  const pendingSection = pendingItems
+    ? `<ul class="pending-list">${pendingItems}</ul>`
+    : "";
   playersEl.innerHTML = `
     <div class="players-head">
       <h2>Room <span class="room-code">${room}</span></h2>
@@ -146,6 +180,7 @@ function renderPlayers(): void {
         Invite
       </button>
     </div>
+    ${pendingSection}
     <ul>${items.join("")}</ul>
   `;
   for (const btn of playersEl.querySelectorAll<HTMLButtonElement>(".players-kick")) {
@@ -162,6 +197,30 @@ function renderPlayers(): void {
     ?.addEventListener("click", () => {
       void copyInviteLink();
     });
+  for (const btn of playersEl.querySelectorAll<HTMLButtonElement>(
+    ".pending-approve",
+  )) {
+    btn.addEventListener("click", () => {
+      const target = Number(btn.dataset.target);
+      if (Number.isNaN(target)) return;
+      conn.send({
+        kind: "Game",
+        action: { kind: "ApproveJoin", candidate: target },
+      });
+    });
+  }
+  for (const btn of playersEl.querySelectorAll<HTMLButtonElement>(
+    ".pending-reject",
+  )) {
+    btn.addEventListener("click", () => {
+      const target = Number(btn.dataset.target);
+      if (Number.isNaN(target)) return;
+      conn.send({
+        kind: "Game",
+        action: { kind: "RejectJoin", candidate: target },
+      });
+    });
+  }
 }
 
 const chatBucket = new TokenBucket(CHAT_BUCKET_CAPACITY, CHAT_BUCKET_REFILL_PER_SEC);
@@ -334,6 +393,8 @@ function applyGameSnapshot(snap: import("./proto").GameSnapshot): void {
 function handleMessage(msg: ServerMsg): void {
   switch (msg.kind) {
     case "Welcome": {
+      // If we were waiting on host approval, the overlay can come down.
+      hideJoinPendingScreen();
       surface.setYouId(msg.you);
       youId = msg.you;
       players.clear();
@@ -371,6 +432,8 @@ function handleMessage(msg: ServerMsg): void {
       for (const p of msg.joined) {
         players.set(p.id, p);
         recordName(p.id, p.name);
+        // Approved rejoin: drop their entry from the host's pending list.
+        pendingJoiners.delete(p.id);
         if (p.id !== youId) chat.appendSystem(`${p.name} joined`);
       }
       for (const id of msg.left) {
@@ -410,6 +473,10 @@ function handleMessage(msg: ServerMsg): void {
     case "Guess":
       if (msg.guess === "Correct") {
         chat.appendCorrectGuess(nameOf(msg.player), colorOf(msg.player));
+      } else if (msg.guess === "Close" && msg.player === youId) {
+        // Server unicasts Close only to the guesser, but we still gate
+        // here for safety.
+        chat.appendCloseGuess();
       }
       return;
     case "Resume":
@@ -444,6 +511,9 @@ function handleMessage(msg: ServerMsg): void {
       return;
     }
     case "Ping":
+      return;
+    case "JoinPending":
+      showJoinPendingScreen();
       return;
   }
 }
@@ -523,6 +593,15 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       renderPlayers();
       renderGameUI();
       return;
+    case "JoinRequest":
+      pendingJoiners.set(event.candidate, event.name);
+      recordName(event.candidate, event.name);
+      renderPlayers();
+      return;
+    case "JoinCanceled":
+      pendingJoiners.delete(event.candidate);
+      renderPlayers();
+      return;
   }
 }
 
@@ -545,7 +624,10 @@ function handleState(s: ConnState): void {
 
 const conn = new Conn({
   url: wsUrl,
-  hello: () => ({ kind: "Hello", hello: { room, name, resume_from: null } }),
+  hello: () => ({
+    kind: "Hello",
+    hello: { room, name, resume_from: null, client_token: clientToken },
+  }),
   onMessage: handleMessage,
   onState: handleState,
 });

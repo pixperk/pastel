@@ -178,11 +178,21 @@ describe("client/server round-trips", () => {
   const fixtures: ClientMsg[] = [
     {
       kind: "Hello",
-      hello: { room: parseRoomCode("ABC234"), name: "alice", resume_from: null },
+      hello: {
+        room: parseRoomCode("ABC234"),
+        name: "alice",
+        resume_from: null,
+        client_token: null,
+      },
     },
     {
       kind: "Hello",
-      hello: { room: parseRoomCode("ABC234"), name: "bob", resume_from: 42 },
+      hello: {
+        room: parseRoomCode("ABC234"),
+        name: "bob",
+        resume_from: 42,
+        client_token: "tok-bob",
+      },
     },
     {
       kind: "Stroke",

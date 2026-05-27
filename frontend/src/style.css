@@ -700,6 +700,61 @@ canvas {
   border-color: var(--ink);
 }
 
+.pending-list {
+  list-style: none;
+  margin: 0 0 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pending-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fdf2c9;
+  border: 1px solid #ead389;
+}
+
+.pending-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.pending-tag {
+  color: #8a6c0e;
+  font-size: 12px;
+}
+
+.pending-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.pending-approve,
+.pending-reject {
+  border: 1px solid var(--ink);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pending-approve:hover {
+  background: #d8f0d6;
+}
+
+.pending-reject:hover {
+  background: #fae9eb;
+}
+
 .players-kick {
   flex-shrink: 0;
   margin-left: auto;
@@ -842,6 +897,11 @@ canvas {
 }
 
 .chat-pill--correct svg { flex-shrink: 0; }
+
+.chat-pill--close {
+  background: #fdf2c9;
+  color: #8a6c0e;
+}
 
 .chat-form {
   flex: 0 0 auto;

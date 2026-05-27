@@ -297,7 +297,9 @@ export type GameAction =
   | { kind: "Start"; mode: GameMode }
   | { kind: "PickWord"; index: number }
   | { kind: "Kick"; player: number }
-  | { kind: "Clear" };
+  | { kind: "Clear" }
+  | { kind: "ApproveJoin"; candidate: number }
+  | { kind: "RejectJoin"; candidate: number };
 
 function writeGameAction(w: Writer, a: GameAction): void {
   switch (a.kind) {
@@ -313,6 +315,12 @@ function writeGameAction(w: Writer, a: GameAction): void {
       return;
     case "Clear":
       return void w.variant(3);
+    case "ApproveJoin":
+      w.variant(4).varint(a.candidate);
+      return;
+    case "RejectJoin":
+      w.variant(5).varint(a.candidate);
+      return;
   }
 }
 
@@ -327,6 +335,10 @@ function readGameAction(r: Reader): GameAction {
       return { kind: "Kick", player: r.varint() };
     case 3:
       return { kind: "Clear" };
+    case 4:
+      return { kind: "ApproveJoin", candidate: r.varint() };
+    case 5:
+      return { kind: "RejectJoin", candidate: r.varint() };
     default:
       throw new Error(`unknown GameAction variant: ${v}`);
   }
@@ -351,7 +363,9 @@ export type GameEvent =
       round_index: number;
       total_rounds: number;
     }
-  | { kind: "HintReveal"; mask: string };
+  | { kind: "HintReveal"; mask: string }
+  | { kind: "JoinRequest"; candidate: number; name: string }
+  | { kind: "JoinCanceled"; candidate: number };
 
 function writeScores(w: Writer, scores: [number, number][]): void {
   w.varint(scores.length);
@@ -396,6 +410,12 @@ function writeGameEvent(w: Writer, e: GameEvent): void {
     case "HintReveal":
       w.variant(5).str(e.mask);
       return;
+    case "JoinRequest":
+      w.variant(6).varint(e.candidate).str(e.name);
+      return;
+    case "JoinCanceled":
+      w.variant(7).varint(e.candidate);
+      return;
   }
 }
 
@@ -427,6 +447,10 @@ function readGameEvent(r: Reader): GameEvent {
       };
     case 5:
       return { kind: "HintReveal", mask: r.str() };
+    case 6:
+      return { kind: "JoinRequest", candidate: r.varint(), name: r.str() };
+    case 7:
+      return { kind: "JoinCanceled", candidate: r.varint() };
     default:
       throw new Error(`unknown GameEvent variant: ${v}`);
   }
@@ -480,12 +504,14 @@ export interface Hello {
   room: RoomCode;
   name: string;
   resume_from: number | null;
+  client_token: string | null;
 }
 
 function writeHello(w: Writer, h: Hello): void {
   writeRoomCode(w, h.room);
   w.str(h.name);
   w.option(h.resume_from, (ww, n) => ww.varint(n));
+  w.option(h.client_token, (ww, s) => ww.str(s));
 }
 
 function readHello(r: Reader): Hello {
@@ -493,6 +519,7 @@ function readHello(r: Reader): Hello {
     room: readRoomCode(r),
     name: r.str(),
     resume_from: r.option((rr) => rr.varint()),
+    client_token: r.option((rr) => rr.str()),
   };
 }
 
@@ -606,7 +633,8 @@ export type ServerMsg =
   | { kind: "Ping"; nonce: number }
   | { kind: "Bye"; reason: ByeReason }
   | { kind: "WordOptions"; words: string[]; deadline_ms: number }
-  | { kind: "DrawerWord"; word: string; duration_ms: number };
+  | { kind: "DrawerWord"; word: string; duration_ms: number }
+  | { kind: "JoinPending" };
 
 export function encodeServerMsg(msg: ServerMsg): Uint8Array<ArrayBuffer> {
   const w = new Writer();
@@ -667,6 +695,9 @@ function writeServerMsg(w: Writer, msg: ServerMsg): void {
       return;
     case "DrawerWord":
       w.variant(10).str(msg.word).varint(msg.duration_ms);
+      return;
+    case "JoinPending":
+      w.variant(11);
       return;
   }
 }
@@ -735,6 +766,8 @@ function readServerMsg(r: Reader): ServerMsg {
         word: r.str(),
         duration_ms: r.varint(),
       };
+    case 11:
+      return { kind: "JoinPending" };
     default:
       throw new Error(`unknown ServerMsg variant: ${v}`);
   }

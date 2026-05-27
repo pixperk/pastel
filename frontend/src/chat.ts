@@ -11,6 +11,7 @@ export interface ChatPanel {
   appendMessage(author: string, text: string, color: number, isYou: boolean): void;
   appendSystem(text: string): void;
   appendCorrectGuess(author: string, color: number): void;
+  appendCloseGuess(): void;
   focus(): void;
   clear(): void;
 }
@@ -139,6 +140,15 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
       a.textContent = author;
       label.append(a, document.createTextNode(" guessed correctly"));
       pill.appendChild(label);
+      wrap.appendChild(pill);
+      append(wrap);
+    },
+    appendCloseGuess() {
+      const wrap = document.createElement("div");
+      wrap.className = "chat-system";
+      const pill = document.createElement("span");
+      pill.className = "chat-pill chat-pill--close";
+      pill.textContent = "you're close";
       wrap.appendChild(pill);
       append(wrap);
     },
