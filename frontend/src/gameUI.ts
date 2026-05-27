@@ -13,7 +13,9 @@ export interface GameUIHandlers {
 export interface RenderContext {
   you: number | null;
   host: number | null;
+  playerCount: number;
   nameOf: (id: number) => string;
+  onCopyInvite: () => void;
 }
 
 export interface GameUI {
@@ -45,8 +47,23 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
         <div class="overlay-card">
           <h2>Waiting for ${escapeHtml(hostName)}</h2>
           <p class="overlay-hint">${escapeHtml(hostName)} picks the mode and starts the game.</p>
+          <button type="button" class="invite-primary">Copy invite link</button>
         </div>
       `;
+      wireInvite(ctx);
+      return;
+    }
+    if (ctx.playerCount < 2) {
+      root.innerHTML = `
+        <div class="overlay-card">
+          <h2>You're alone in here</h2>
+          <p class="overlay-hint">
+            At least 2 players needed to start. Did you invite anyone?
+          </p>
+          <button type="button" class="invite-primary">Copy invite link</button>
+        </div>
+      `;
+      wireInvite(ctx);
       return;
     }
     const options = MODE_OPTIONS.map(
@@ -61,12 +78,31 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
         <h2>Pick a mode</h2>
         <div class="mode-grid">${options}</div>
         <p class="overlay-hint">Every player draws once per round. You're the host.</p>
+        <button type="button" class="invite-secondary">Copy invite link</button>
       </div>
     `;
     for (const btn of root.querySelectorAll<HTMLButtonElement>(".mode-card")) {
       btn.addEventListener("click", () => {
         const mode = btn.dataset.mode as GameMode;
         handlers.onStart(mode);
+      });
+    }
+    wireInvite(ctx);
+  }
+
+  function wireInvite(ctx: RenderContext): void {
+    for (const btn of root.querySelectorAll<HTMLButtonElement>(
+      ".invite-primary, .invite-secondary",
+    )) {
+      btn.addEventListener("click", () => {
+        ctx.onCopyInvite();
+        const original = btn.textContent;
+        btn.textContent = "Link copied";
+        btn.disabled = true;
+        setTimeout(() => {
+          btn.textContent = original;
+          btn.disabled = false;
+        }, 1500);
       });
     }
   }
