@@ -83,7 +83,7 @@ const overlayEl = document.getElementById("gameOverlay") as HTMLElement;
 const room = pickRoomCode();
 const { name, avatar } = await pickNameAndAvatar();
 const clientToken = pickClientToken();
-document.title = `pastel · ${room}`;
+document.title = `pastel -- room ${room}`;
 
 // Mode for the next game start. Seeded from the URL (?mode=...) which the
 // landing page sets for the host. Falls back to Standard for joiners and
@@ -153,11 +153,20 @@ function colorOf(id: number): number {
 
 function renderPlayers(): void {
   const youAreHost = youId !== null && youId === gameState.host;
-  const items = Array.from(players.values()).map((p) => {
+  const sorted = Array.from(players.values()).sort((a, b) => {
+    const sa = gameState.scores.get(a.id) ?? 0;
+    const sb = gameState.scores.get(b.id) ?? 0;
+    return sb - sa || a.id - b.id;
+  });
+  const items = sorted.map((p, idx) => {
     const color = rgbToCss(colorOf(p.id));
     const score = gameState.scores.get(p.id);
     const prev = prevScores.get(p.id);
     const changed = score !== undefined && prev !== undefined && score !== prev;
+    const hasScores = gameState.scores.size > 0;
+    const rankTag = hasScores
+      ? `<span class="players-rank">#${idx + 1}</span>`
+      : "";
     const scoreTag =
       score !== undefined
         ? `<span class="players-score${changed ? " players-score--pop" : ""}" data-pid="${p.id}">${score}</span>`
@@ -175,6 +184,7 @@ function renderPlayers(): void {
       ? '<span class="players-guessed" title="Guessed correctly">✓</span>'
       : "";
     return `<li>
+      ${rankTag}
       <span class="players-avatar">${renderAvatar(p.avatar)}</span>
       <span class="swatch" style="background:${color}"></span>
       <span class="players-name">${escapeHtml(p.name)}</span>
@@ -343,10 +353,10 @@ async function copyInviteLink(): Promise<void> {
       document.execCommand("copy");
       document.body.removeChild(ta);
     }
-    showToast("Invite link copied", { kind: "success" });
+    showToast("Link copied!", { kind: "success" });
   } catch {
-    showToast("Could not copy invite link", { kind: "error" });
-    chat.appendSystem("invite link: " + url);
+    showToast("Couldn't copy the link", { kind: "error" });
+    chat.appendSystem("share this link: " + url);
   }
 }
 
@@ -362,7 +372,7 @@ function updateBanner(): void {
   const isDrawing = phase.kind === "Drawing";
   const isDrawer = isDrawing && phase.drawer === youId;
   const hint = isDrawing && !isDrawer
-    ? `<div class="banner-hint">${escapeHtml(nameOf(phase.drawer))} is drawing · you can scribble locally, only you see it</div>`
+    ? `<div class="banner-hint">${escapeHtml(nameOf(phase.drawer))} is drawing -- feel free to doodle, only you can see it</div>`
     : "";
   bannerEl.innerHTML = `
     <div class="banner-main">
@@ -485,7 +495,7 @@ function handleMessage(msg: ServerMsg): void {
           avatarOf(line.player),
         );
       }
-      chat.appendSystem(`joined room ${room}`);
+      chat.appendSystem(`you're in! welcome to room ${room}`);
       renderGameUI();
       return;
     }
@@ -496,7 +506,7 @@ function handleMessage(msg: ServerMsg): void {
         recordAvatar(p.id, p.avatar);
         // Approved rejoin: drop their entry from the host's pending list.
         pendingJoiners.delete(p.id);
-        if (p.id !== youId) chat.appendSystem(`${p.name} joined`, avatarOf(p.id));
+        if (p.id !== youId) chat.appendSystem(`${p.name} hopped in`, avatarOf(p.id));
       }
       for (const id of msg.left) {
         const who = nameOf(id);
@@ -504,7 +514,7 @@ function handleMessage(msg: ServerMsg): void {
         players.delete(id);
         playerColors.delete(id);
         // nameHistory keeps `who` for any future references in chat/scores.
-        chat.appendSystem(`${who} left`, avatar);
+        chat.appendSystem(`${who} left the room`, avatar);
       }
       renderPlayers();
       // Re-render the overlay too: the lobby's "you're alone" message
@@ -545,7 +555,7 @@ function handleMessage(msg: ServerMsg): void {
         );
         showCanvasEvent({
           avatarHtml: avatarOf(msg.player),
-          message: `${nameOf(msg.player)} guessed it!`,
+          message: `${nameOf(msg.player)} got it!`,
           kind: "celebrate",
         });
       } else if (msg.guess === "Close" && msg.player === youId) {
@@ -561,7 +571,7 @@ function handleMessage(msg: ServerMsg): void {
       // Terminal Byes get a full-screen takeover so the user actually
       // notices. "Reconnect" is transient; the WS layer will reconnect.
       if (msg.reason === "Reconnect") {
-        statusEl.textContent = "reconnecting…";
+        statusEl.textContent = "reconnecting...";
         return;
       }
       showFatalScreen(msg.reason);
@@ -597,10 +607,10 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
   switch (event.kind) {
     case "Cleared":
       surface.clear();
-      chat.appendSystem(`${nameOf(event.by)} cleared the canvas`, avatarOf(event.by));
+      chat.appendSystem(`${nameOf(event.by)} wiped the canvas clean`, avatarOf(event.by));
       showCanvasEvent({
         avatarHtml: avatarOf(event.by),
-        message: `${nameOf(event.by)} cleared the canvas`,
+        message: `${nameOf(event.by)} wiped the canvas`,
       });
       return;
     case "WordPickStarted": {
@@ -621,7 +631,7 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       pendingWordOptions = null;
       surface.clear();
       chat.appendSystem(
-        `Round ${event.round_index + 1}/${event.total_rounds}: ${nameOf(event.drawer)} is picking a word`,
+        `Round ${event.round_index + 1}/${event.total_rounds} -- ${nameOf(event.drawer)} is up next`,
       );
       renderGameUI();
       return;
@@ -679,7 +689,7 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
         word: event.word,
         scores: event.scores,
       };
-      chat.appendSystem(`Word was "${event.word}"`);
+      chat.appendSystem(`the word was "${event.word}"`);
       renderPlayers();
       renderGameUI();
       return;
@@ -704,12 +714,12 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
     case "HostChanged":
       gameState.host = event.new_host;
       chat.appendSystem(
-        `${nameOf(event.new_host)} is the new host`,
+        `${nameOf(event.new_host)} is now the host`,
         avatarOf(event.new_host),
       );
       showCanvasEvent({
         avatarHtml: avatarOf(event.new_host),
-        message: `${nameOf(event.new_host)} is the new host`,
+        message: `${nameOf(event.new_host)} is now the host`,
       });
       renderPlayers();
       renderGameUI();
@@ -720,16 +730,16 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
 function handleState(s: ConnState): void {
   switch (s.kind) {
     case "connecting":
-      statusEl.textContent = "connecting…";
+      statusEl.textContent = "finding the room...";
       return;
     case "open":
-      statusEl.textContent = `room ${room} · ${name}`;
+      statusEl.textContent = `room ${room} -- playing as ${name}`;
       return;
     case "reconnecting":
-      statusEl.textContent = `reconnecting (attempt ${s.attempt})…`;
+      statusEl.textContent = `reconnecting... (try ${s.attempt})`;
       return;
     case "closed":
-      statusEl.textContent = `disconnected: ${s.reason}`;
+      statusEl.textContent = `lost connection: ${s.reason}`;
       return;
   }
 }
