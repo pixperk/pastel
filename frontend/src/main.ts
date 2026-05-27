@@ -1,6 +1,11 @@
+import { renderAvatar } from "./avatar";
+import { pickNameAndAvatar } from "./avatarPicker";
 import { CHAT_BUCKET_CAPACITY, CHAT_BUCKET_REFILL_PER_SEC, TokenBucket } from "./bucket";
 import { DrawingSurface } from "./canvas";
+import { showCanvasEvent } from "./canvasEvent";
 import { mountChat, type ChatPanel } from "./chat";
+import { showConfirm } from "./dialog";
+import { showToast } from "./toast";
 import { applyScores, emptyState, type GamePhase, type GameState } from "./game";
 import { mountGameUI } from "./gameUI";
 import {
@@ -25,10 +30,10 @@ const params = new URLSearchParams(window.location.search);
 if (!params.has("room")) {
   showLanding();
 } else {
-  bootRoom();
+  void bootRoom();
 }
 
-function bootRoom(): void {
+async function bootRoom(): Promise<void> {
 
 function pickRoomCode(): string {
   const params = new URLSearchParams(window.location.search);
@@ -60,21 +65,6 @@ function pickClientToken(): string {
   return tok;
 }
 
-function pickName(): string {
-  const stored = window.localStorage.getItem("pastel.name");
-  const prompt = stored
-    ? `Hi ${stored}! Keep this name, or type a new one:`
-    : "Pick a name";
-  const reply = window.prompt(prompt, stored ?? "");
-  if (reply === null) {
-    if (stored) return stored;
-    window.localStorage.setItem("pastel.name", "anon");
-    return "anon";
-  }
-  const trimmed = reply.trim().slice(0, 32) || stored || "anon";
-  window.localStorage.setItem("pastel.name", trimmed);
-  return trimmed;
-}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
@@ -91,7 +81,7 @@ const bannerEl = document.getElementById("banner") as HTMLElement;
 const overlayEl = document.getElementById("gameOverlay") as HTMLElement;
 
 const room = pickRoomCode();
-const name = pickName();
+const { name, avatar } = await pickNameAndAvatar();
 const clientToken = pickClientToken();
 document.title = `pastel · ${room}`;
 
@@ -105,14 +95,30 @@ surface.setWidth(initialTool.width);
 const players = new Map<number, Player>();
 const playerColors = new Map<number, number>();
 const pendingJoiners = new Map<number, string>();
-// Sticky names: once we've ever seen a PlayerId's name, we remember it
-// forever this session. Old chat messages and end-of-game podiums for
-// players who have since left still render with their real name.
+// Sticky names + avatars: once we've ever seen a PlayerId's name/avatar,
+// we remember it forever this session. Old chat messages and end-of-game
+// podiums for players who have since left still render with their real
+// identity.
 const nameHistory = new Map<number, string>();
+const avatarHistory = new Map<number, import("./proto").Avatar>();
 let youId: number | null = null;
 
 function recordName(id: number, name: string): void {
   nameHistory.set(id, name);
+}
+
+function recordAvatar(id: number, av: import("./proto").Avatar): void {
+  avatarHistory.set(id, av);
+}
+
+function avatarOf(id: number): string {
+  const a = players.get(id)?.avatar ?? avatarHistory.get(id);
+  if (a) return renderAvatar(a);
+  // Player we never knew (extremely unlikely). Fall back to a tiny initial
+  // chip so the row layout still looks consistent.
+  const name = nameOf(id);
+  const ch = (name[0] ?? "?").toUpperCase();
+  return `<span class="avatar-fallback">${ch}</span>`;
 }
 
 const gameState: GameState = emptyState();
@@ -150,6 +156,7 @@ function renderPlayers(): void {
           )} from the room" aria-label="Remove ${escapeHtml(p.name)}">×</button>`
         : "";
     return `<li>
+      <span class="players-avatar">${renderAvatar(p.avatar)}</span>
       <span class="swatch" style="background:${color}"></span>
       <span class="players-name">${escapeHtml(p.name)}</span>
       ${youTag}${hostTag}${scoreTag}${kickBtn}
@@ -187,9 +194,15 @@ function renderPlayers(): void {
     btn.addEventListener("click", () => {
       const target = Number(btn.dataset.target);
       if (Number.isNaN(target)) return;
-      if (window.confirm(`Remove ${nameOf(target)} from the room?`)) {
-        conn.send({ kind: "Game", action: { kind: "Kick", player: target } });
-      }
+      const who = nameOf(target);
+      void showConfirm({
+        title: `Remove ${who}?`,
+        message: `${who} will be kicked from the room and will need your approval to rejoin.`,
+        confirmLabel: "Remove",
+        destructive: true,
+      }).then((ok) => {
+        if (ok) conn.send({ kind: "Game", action: { kind: "Kick", player: target } });
+      });
     });
   }
   playersEl
@@ -272,6 +285,7 @@ function renderGameUI(): void {
     host: gameState.host,
     playerCount: players.size,
     nameOf: (id) => nameOf(id),
+    avatarOf: (id) => avatarOf(id),
     onCopyInvite: copyInviteLink,
   });
   updateBanner();
@@ -294,9 +308,10 @@ async function copyInviteLink(): Promise<void> {
       document.execCommand("copy");
       document.body.removeChild(ta);
     }
-    chat.appendSystem("invite link copied to clipboard");
+    showToast("Invite link copied", { kind: "success" });
   } catch {
-    chat.appendSystem("could not copy invite link, here it is: " + url);
+    showToast("Could not copy invite link", { kind: "error" });
+    chat.appendSystem("invite link: " + url);
   }
 }
 
@@ -316,6 +331,9 @@ function updateBanner(): void {
     : "";
   bannerEl.innerHTML = `
     <div class="banner-main">
+      <div class="banner-drawer" title="${escapeHtml(nameOf(phase.drawer))}">
+        ${avatarOf(phase.drawer)}
+      </div>
       <div class="banner-round">${escapeHtml(round)}</div>
       <div class="banner-mask">${escapeHtml(text)}</div>
       <div class="banner-timer" id="bannerTimer">--</div>
@@ -402,14 +420,19 @@ function handleMessage(msg: ServerMsg): void {
       for (const p of msg.snapshot.players) {
         players.set(p.id, p);
         recordName(p.id, p.name);
+        recordAvatar(p.id, p.avatar);
       }
-      players.set(msg.you, { id: msg.you, name });
+      players.set(msg.you, { id: msg.you, name, avatar });
       recordName(msg.you, name);
-      // Snapshot chat may reference names of players who have since left;
-      // ensure those names persist for re-render after reload.
+      recordAvatar(msg.you, avatar);
+      // Snapshot chat may reference identities of players who have since left;
+      // ensure those names + avatars persist for re-render after reload.
       for (const line of msg.snapshot.chat) {
         const author = msg.snapshot.players.find((p) => p.id === line.player);
-        if (author) recordName(author.id, author.name);
+        if (author) {
+          recordName(author.id, author.name);
+          recordAvatar(author.id, author.avatar);
+        }
       }
       for (const s of msg.snapshot.completed) playerColors.set(s.player, s.color);
       applyGameSnapshot(msg.snapshot.game);
@@ -422,6 +445,7 @@ function handleMessage(msg: ServerMsg): void {
           line.text,
           colorOf(line.player),
           line.player === youId,
+          avatarOf(line.player),
         );
       }
       chat.appendSystem(`joined room ${room}`);
@@ -432,16 +456,18 @@ function handleMessage(msg: ServerMsg): void {
       for (const p of msg.joined) {
         players.set(p.id, p);
         recordName(p.id, p.name);
+        recordAvatar(p.id, p.avatar);
         // Approved rejoin: drop their entry from the host's pending list.
         pendingJoiners.delete(p.id);
-        if (p.id !== youId) chat.appendSystem(`${p.name} joined`);
+        if (p.id !== youId) chat.appendSystem(`${p.name} joined`, avatarOf(p.id));
       }
       for (const id of msg.left) {
         const who = nameOf(id);
+        const avatar = avatarOf(id); // capture before delete
         players.delete(id);
         playerColors.delete(id);
         // nameHistory keeps `who` for any future references in chat/scores.
-        chat.appendSystem(`${who} left`);
+        chat.appendSystem(`${who} left`, avatar);
       }
       renderPlayers();
       // Re-render the overlay too: the lobby's "you're alone" message
@@ -468,11 +494,21 @@ function handleMessage(msg: ServerMsg): void {
         msg.text,
         colorOf(msg.player),
         msg.player === youId,
+        avatarOf(msg.player),
       );
       return;
     case "Guess":
       if (msg.guess === "Correct") {
-        chat.appendCorrectGuess(nameOf(msg.player), colorOf(msg.player));
+        chat.appendCorrectGuess(
+          nameOf(msg.player),
+          colorOf(msg.player),
+          avatarOf(msg.player),
+        );
+        showCanvasEvent({
+          avatarHtml: avatarOf(msg.player),
+          message: `${nameOf(msg.player)} guessed it!`,
+          kind: "celebrate",
+        });
       } else if (msg.guess === "Close" && msg.player === youId) {
         // Server unicasts Close only to the guesser, but we still gate
         // here for safety.
@@ -522,7 +558,11 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
   switch (event.kind) {
     case "Cleared":
       surface.clear();
-      chat.appendSystem(`${nameOf(event.by)} cleared the canvas`);
+      chat.appendSystem(`${nameOf(event.by)} cleared the canvas`, avatarOf(event.by));
+      showCanvasEvent({
+        avatarHtml: avatarOf(event.by),
+        message: `${nameOf(event.by)} cleared the canvas`,
+      });
       return;
     case "WordPickStarted": {
       const deadline = performance.now() + event.deadline_ms;
@@ -604,7 +644,14 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       return;
     case "HostChanged":
       gameState.host = event.new_host;
-      chat.appendSystem(`${nameOf(event.new_host)} is the new host`);
+      chat.appendSystem(
+        `${nameOf(event.new_host)} is the new host`,
+        avatarOf(event.new_host),
+      );
+      showCanvasEvent({
+        avatarHtml: avatarOf(event.new_host),
+        message: `${nameOf(event.new_host)} is the new host`,
+      });
       renderPlayers();
       renderGameUI();
       return;
@@ -632,7 +679,13 @@ const conn = new Conn({
   url: wsUrl,
   hello: () => ({
     kind: "Hello",
-    hello: { room, name, resume_from: null, client_token: clientToken },
+    hello: {
+      room,
+      name,
+      resume_from: null,
+      client_token: clientToken,
+      avatar,
+    },
   }),
   onMessage: handleMessage,
   onState: handleState,

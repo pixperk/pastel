@@ -1,5 +1,6 @@
 :root {
   --bg: #fdfbf7;
+  --surface: #ffffff;
   --ink: #2a2a2e;
   --muted: #76767c;
   --line: #efeae1;
@@ -355,7 +356,7 @@ canvas {
 
 .podium-row {
   display: grid;
-  grid-template-columns: 36px 1fr auto;
+  grid-template-columns: 28px 36px 1fr auto;
   gap: 12px;
   padding: 10px 14px;
   border-radius: 8px;
@@ -637,6 +638,232 @@ canvas {
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.players-avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #f3eefb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.players-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Inline initials chip used when we never had an avatar for an id. */
+.avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: var(--line);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+/* Chat author chip: small avatar pinned left of message body. */
+.chat-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.chat-msg-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.chat-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.chat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-pill-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.chat-pill-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Banner above the canvas grows a small drawer avatar on the left. */
+.banner-drawer {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.banner-drawer svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Round-end + game-over scoreboards. */
+.score-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.score-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.score-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.score-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.score-points {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.podium-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.podium-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Canvas event float: announces player-specific actions over the drawing. */
+.canvas-event-host {
+  position: fixed;
+  top: 88px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.canvas-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  color: var(--ink);
+  font-size: 13px;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.96);
+  transition: opacity 180ms ease-out, transform 180ms ease-out;
+}
+
+.canvas-event-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.canvas-event-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.canvas-event--in {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.canvas-event--out {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.96);
+}
+
+.canvas-event--celebrate {
+  background: #fff4cc;
+  border-color: #f0d77a;
 }
 
 .players-you {
@@ -1289,4 +1516,356 @@ canvas {
 .kicked-secondary:hover {
   border-color: var(--ink);
   background: var(--bg);
+}
+
+/* ---------- avatar picker overlay ---------- */
+
+.picker {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(42, 42, 46, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.picker-card {
+  width: min(560px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.10);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.picker-head h1 {
+  font-size: 19px;
+  margin: 0;
+  color: var(--ink);
+}
+
+.picker-tag {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.picker-preview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.picker-svg {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.picker-svg svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.picker-random {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out;
+}
+
+.picker-random:hover {
+  border-color: var(--ink);
+  background: var(--bg);
+}
+
+.picker-name {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.picker-name .field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.picker-name input {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.picker-name input:focus {
+  outline: none;
+  border-color: var(--ink);
+  background: var(--surface);
+}
+
+.picker-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.picker-tab {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color 120ms ease-out, border-color 120ms ease-out, background-color 120ms ease-out;
+}
+
+.picker-tab:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.picker-tab--on {
+  background: var(--ink);
+  color: #ffffff;
+  border-color: var(--ink);
+}
+
+.picker-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.picker-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  color: var(--muted);
+  font: inherit;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.picker-opt:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.picker-opt--on {
+  border-color: var(--ink);
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink) inset;
+}
+
+.picker-swatch {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.picker-swatch svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.picker-swatch--skin {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.picker-opt-label {
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.picker-submit {
+  margin-top: 4px;
+  border: none;
+  background: var(--ink);
+  color: #ffffff;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, transform 100ms ease-out;
+}
+
+.picker-submit:hover {
+  background: #000;
+  transform: translateY(-1px);
+}
+
+/* ---------- toast ---------- */
+
+.toast-host {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(40, 32, 56, 0.18);
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+  cursor: pointer;
+}
+
+.toast--in {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.toast--out {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.toast--success {
+  background: #2f7d4e;
+}
+
+.toast--warning {
+  background: #b07814;
+}
+
+.toast--error {
+  background: #b54434;
+}
+
+/* ---------- confirm dialog ---------- */
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(40, 32, 56, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.dialog-card {
+  width: min(420px, 100%);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 22px 24px 18px;
+  border: 1px solid #e5dff3;
+  box-shadow: 0 20px 48px rgba(40, 32, 56, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 17px;
+  color: var(--ink);
+}
+
+.dialog-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.dialog-cancel,
+.dialog-confirm {
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.dialog-cancel {
+  border: 1px solid #d8d2e3;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.dialog-cancel:hover {
+  background: var(--bg);
+}
+
+.dialog-confirm {
+  border: none;
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.dialog-confirm:hover {
+  opacity: 0.92;
+}
+
+.dialog-confirm--destructive {
+  background: #b54434;
 }

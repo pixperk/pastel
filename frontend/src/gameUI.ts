@@ -15,6 +15,7 @@ export interface RenderContext {
   host: number | null;
   playerCount: number;
   nameOf: (id: number) => string;
+  avatarOf: (id: number) => string;
   onCopyInvite: () => void;
 }
 
@@ -158,13 +159,17 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
 
   function renderRoundEnd(
     phase: Extract<GamePhase, { kind: "RoundEnd" }>,
-    nameOf: (id: number) => string,
+    ctx: RenderContext,
   ): void {
     visible();
     const rows = phase.scores
       .map(
         ([id, score]) =>
-          `<li><span>${escapeHtml(nameOf(id))}</span><span>${score}</span></li>`,
+          `<li>
+             <span class="score-avatar">${ctx.avatarOf(id)}</span>
+             <span class="score-name">${escapeHtml(ctx.nameOf(id))}</span>
+             <span class="score-points">${score}</span>
+           </li>`,
       )
       .join("");
     root.innerHTML = `
@@ -186,6 +191,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
         ([id, score], i) =>
           `<li class="podium-row podium-${i + 1}">
              <span class="podium-rank">#${i + 1}</span>
+             <span class="podium-avatar">${ctx.avatarOf(id)}</span>
              <span class="podium-name">${escapeHtml(ctx.nameOf(id))}</span>
              <span class="podium-score">${score}</span>
            </li>`,
@@ -220,7 +226,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
         renderChoosing(phase, ctx);
         break;
       case "RoundEnd":
-        renderRoundEnd(phase, ctx.nameOf);
+        renderRoundEnd(phase, ctx);
         break;
       case "GameOver":
         renderGameOver(phase, ctx);

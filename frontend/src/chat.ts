@@ -8,9 +8,15 @@ export interface ChatHandlers {
 }
 
 export interface ChatPanel {
-  appendMessage(author: string, text: string, color: number, isYou: boolean): void;
-  appendSystem(text: string): void;
-  appendCorrectGuess(author: string, color: number): void;
+  appendMessage(
+    author: string,
+    text: string,
+    color: number,
+    isYou: boolean,
+    avatarHtml?: string,
+  ): void;
+  appendSystem(text: string, avatarHtml?: string): void;
+  appendCorrectGuess(author: string, color: number, avatarHtml?: string): void;
   appendCloseGuess(): void;
   focus(): void;
   clear(): void;
@@ -106,9 +112,17 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
   });
 
   return {
-    appendMessage(author, text, color, isYou) {
+    appendMessage(author, text, color, isYou, avatarHtml) {
       const wrap = document.createElement("div");
       wrap.className = "chat-msg" + (isYou ? " chat-msg--you" : "");
+      if (avatarHtml) {
+        const av = document.createElement("span");
+        av.className = "chat-avatar";
+        av.innerHTML = avatarHtml;
+        wrap.append(av);
+      }
+      const body = document.createElement("div");
+      body.className = "chat-msg-body";
       const a = document.createElement("span");
       a.className = "chat-author";
       a.style.color = rgbToCss(color);
@@ -116,24 +130,38 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
       const t = document.createElement("span");
       t.className = "chat-text";
       t.textContent = text;
-      wrap.append(a, t);
+      body.append(a, t);
+      wrap.append(body);
       append(wrap);
     },
-    appendSystem(text) {
+    appendSystem(text, avatarHtml) {
       const wrap = document.createElement("div");
       wrap.className = "chat-system";
       const pill = document.createElement("span");
       pill.className = "chat-pill";
-      pill.textContent = text;
+      if (avatarHtml) {
+        const av = document.createElement("span");
+        av.className = "chat-pill-avatar";
+        av.innerHTML = avatarHtml;
+        pill.appendChild(av);
+      }
+      pill.appendChild(document.createTextNode(text));
       wrap.appendChild(pill);
       append(wrap);
     },
-    appendCorrectGuess(author, color) {
+    appendCorrectGuess(author, color, avatarHtml) {
       const wrap = document.createElement("div");
       wrap.className = "chat-system";
       const pill = document.createElement("span");
       pill.className = "chat-pill chat-pill--correct";
-      pill.innerHTML = CHECK_ICON;
+      if (avatarHtml) {
+        const av = document.createElement("span");
+        av.className = "chat-pill-avatar";
+        av.innerHTML = avatarHtml;
+        pill.appendChild(av);
+      } else {
+        pill.innerHTML = CHECK_ICON;
+      }
       const label = document.createElement("span");
       const a = document.createElement("strong");
       a.style.color = rgbToCss(color);
