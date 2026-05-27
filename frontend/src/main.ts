@@ -3,6 +3,7 @@ import { DrawingSurface } from "./canvas";
 import { mountChat, type ChatPanel } from "./chat";
 import { applyScores, emptyState, type GamePhase, type GameState } from "./game";
 import { mountGameUI } from "./gameUI";
+import { showFatalScreen } from "./kicked";
 import { showLanding } from "./landing";
 import { rgbToCss } from "./palette";
 import {
@@ -88,7 +89,15 @@ surface.setWidth(initialTool.width);
 
 const players = new Map<number, Player>();
 const playerColors = new Map<number, number>();
+// Sticky names: once we've ever seen a PlayerId's name, we remember it
+// forever this session. Old chat messages and end-of-game podiums for
+// players who have since left still render with their real name.
+const nameHistory = new Map<number, string>();
 let youId: number | null = null;
+
+function recordName(id: number, name: string): void {
+  nameHistory.set(id, name);
+}
 
 const gameState: GameState = emptyState();
 
@@ -101,7 +110,7 @@ let pendingWordOptions: string[] | null = null;
 let pendingDrawerWord: string | null = null;
 
 function nameOf(id: number, fallback = "anon"): string {
-  return players.get(id)?.name ?? fallback;
+  return players.get(id)?.name ?? nameHistory.get(id) ?? fallback;
 }
 
 function colorOf(id: number): number {
@@ -329,8 +338,18 @@ function handleMessage(msg: ServerMsg): void {
       youId = msg.you;
       players.clear();
       playerColors.clear();
-      for (const p of msg.snapshot.players) players.set(p.id, p);
+      for (const p of msg.snapshot.players) {
+        players.set(p.id, p);
+        recordName(p.id, p.name);
+      }
       players.set(msg.you, { id: msg.you, name });
+      recordName(msg.you, name);
+      // Snapshot chat may reference names of players who have since left;
+      // ensure those names persist for re-render after reload.
+      for (const line of msg.snapshot.chat) {
+        const author = msg.snapshot.players.find((p) => p.id === line.player);
+        if (author) recordName(author.id, author.name);
+      }
       for (const s of msg.snapshot.completed) playerColors.set(s.player, s.color);
       applyGameSnapshot(msg.snapshot.game);
       renderPlayers();
@@ -351,12 +370,14 @@ function handleMessage(msg: ServerMsg): void {
     case "Presence": {
       for (const p of msg.joined) {
         players.set(p.id, p);
+        recordName(p.id, p.name);
         if (p.id !== youId) chat.appendSystem(`${p.name} joined`);
       }
       for (const id of msg.left) {
         const who = nameOf(id);
         players.delete(id);
         playerColors.delete(id);
+        // nameHistory keeps `who` for any future references in chat/scores.
         chat.appendSystem(`${who} left`);
       }
       renderPlayers();
@@ -395,8 +416,13 @@ function handleMessage(msg: ServerMsg): void {
       for (const e of msg.events) handleMessage(e);
       return;
     case "Bye":
-      statusEl.textContent = `disconnected: ${msg.reason.toLowerCase()}`;
-      chat.appendSystem(`disconnected: ${msg.reason.toLowerCase()}`);
+      // Terminal Byes get a full-screen takeover so the user actually
+      // notices. "Reconnect" is transient; the WS layer will reconnect.
+      if (msg.reason === "Reconnect") {
+        statusEl.textContent = "reconnecting…";
+        return;
+      }
+      showFatalScreen(msg.reason);
       return;
     case "Game":
       handleGameEvent(msg.event);
