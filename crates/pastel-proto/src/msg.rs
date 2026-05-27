@@ -63,6 +63,11 @@ pub enum GameEvent {
     JoinCanceled {
         candidate: PlayerId,
     },
+    /// The previous host left; this player is now the host. Receivers should
+    /// update local `game.host` and re-render host-only affordances.
+    HostChanged {
+        new_host: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

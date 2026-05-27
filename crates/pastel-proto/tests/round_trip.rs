@@ -216,6 +216,7 @@ fn arb_game_event() -> impl Strategy<Value = GameEvent> {
         (any::<u32>(), arb_name())
             .prop_map(|(candidate, name)| GameEvent::JoinRequest { candidate, name }),
         any::<u32>().prop_map(|candidate| GameEvent::JoinCanceled { candidate }),
+        any::<u32>().prop_map(|new_host| GameEvent::HostChanged { new_host }),
     ]
 }
 

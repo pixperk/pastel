@@ -365,7 +365,8 @@ export type GameEvent =
     }
   | { kind: "HintReveal"; mask: string }
   | { kind: "JoinRequest"; candidate: number; name: string }
-  | { kind: "JoinCanceled"; candidate: number };
+  | { kind: "JoinCanceled"; candidate: number }
+  | { kind: "HostChanged"; new_host: number };
 
 function writeScores(w: Writer, scores: [number, number][]): void {
   w.varint(scores.length);
@@ -416,6 +417,9 @@ function writeGameEvent(w: Writer, e: GameEvent): void {
     case "JoinCanceled":
       w.variant(7).varint(e.candidate);
       return;
+    case "HostChanged":
+      w.variant(8).varint(e.new_host);
+      return;
   }
 }
 
@@ -451,6 +455,8 @@ function readGameEvent(r: Reader): GameEvent {
       return { kind: "JoinRequest", candidate: r.varint(), name: r.str() };
     case 7:
       return { kind: "JoinCanceled", candidate: r.varint() };
+    case 8:
+      return { kind: "HostChanged", new_host: r.varint() };
     default:
       throw new Error(`unknown GameEvent variant: ${v}`);
   }
