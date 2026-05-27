@@ -279,6 +279,7 @@ async fn run_client(
         name,
         resume_from: None,
         client_token: None,
+        avatar: Avatar::default(),
     });
     if sink
         .send(Message::Binary(encode(&hello).unwrap()))

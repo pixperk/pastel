@@ -62,6 +62,7 @@ fn hello(name: &str) -> ClientMsg {
         name: name.into(),
         resume_from: None,
         client_token: None,
+        avatar: Avatar::default(),
     })
 }
 
