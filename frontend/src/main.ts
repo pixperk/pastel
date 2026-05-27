@@ -360,6 +360,9 @@ function handleMessage(msg: ServerMsg): void {
         chat.appendSystem(`${who} left`);
       }
       renderPlayers();
+      // Re-render the overlay too: the lobby's "you're alone" message
+      // depends on player count, and a Presence change just shifted it.
+      renderGameUI();
       return;
     }
     case "Stroke":
