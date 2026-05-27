@@ -520,8 +520,10 @@ impl Room {
 
         // Host transfer: if the host leaves, pass to the oldest remaining
         // player (lowest PlayerId, since IDs increase monotonically).
+        let mut new_host = None;
         if self.game.host == Some(player) {
             self.game.host = self.players.keys().min().copied();
+            new_host = self.game.host;
         }
 
         let seq = self.next_seq();
@@ -530,6 +532,14 @@ impl Room {
             joined: vec![],
             left: vec![player],
         });
+
+        if let Some(nh) = new_host {
+            let seq = self.next_seq();
+            self.broadcast(ServerMsg::Game {
+                seq,
+                event: GameEvent::HostChanged { new_host: nh },
+            });
+        }
 
         // If a game is in flight and we're down to fewer than 2 players,
         // just end the game now and reveal accumulated scores. No point

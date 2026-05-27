@@ -346,3 +346,56 @@ async fn drain_presence(rx: &mut BroadcastRx<Arc<ServerMsg>>, count: usize) {
         }
     }
 }
+
+#[tokio::test]
+async fn host_leaving_promotes_next_player_and_broadcasts_host_changed() {
+    let h = spawn();
+    // alice joins first, becomes host. bob and carol follow.
+    let a = join(&h, "alice").await;
+    let mut b = join(&h, "bob").await;
+    let _c = join(&h, "carol").await;
+    let _ = next_unicast(&mut b.unicast_rx).await; // Welcome
+                                                   // bob subscribed after alice's join broadcast, so he only sees his own
+                                                   // join Presence + carol's: 2 frames.
+    drain_presence(&mut b.broadcast_rx, 2).await;
+
+    // alice (host) leaves.
+    h.leave(a.you).await;
+
+    // Presence.left for alice.
+    match next(&mut b.broadcast_rx).await.as_ref() {
+        ServerMsg::Presence { left, .. } => assert_eq!(left, &vec![a.you]),
+        other => panic!("expected Presence(left), got {other:?}"),
+    }
+    // Followed by HostChanged naming bob (lowest remaining PlayerId).
+    match next(&mut b.broadcast_rx).await.as_ref() {
+        ServerMsg::Game {
+            event: GameEvent::HostChanged { new_host },
+            ..
+        } => assert_eq!(*new_host, b.you),
+        other => panic!("expected Game(HostChanged), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn non_host_leaving_does_not_broadcast_host_changed() {
+    let h = spawn();
+    let mut a = join(&h, "alice").await;
+    let b = join(&h, "bob").await;
+    let _ = next_unicast(&mut a.unicast_rx).await;
+    drain_presence(&mut a.broadcast_rx, 2).await;
+
+    h.leave(b.you).await;
+
+    // Just the Presence.left, no HostChanged.
+    match next(&mut a.broadcast_rx).await.as_ref() {
+        ServerMsg::Presence { left, .. } => assert_eq!(left, &vec![b.you]),
+        other => panic!("expected Presence(left), got {other:?}"),
+    }
+    // Confirm nothing else lands in a tight window.
+    let result = tokio::time::timeout(Duration::from_millis(50), a.broadcast_rx.recv()).await;
+    assert!(
+        result.is_err(),
+        "non-host leaving should not produce a HostChanged"
+    );
+}
