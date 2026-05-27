@@ -410,7 +410,16 @@ impl Room {
             left: vec![player],
         });
 
-        if was_current_drawer {
+        // If a game is in flight and we're down to fewer than 2 players,
+        // just end the game now and reveal accumulated scores. No point
+        // walking the round end ceremony when nobody's left to play.
+        let game_active = matches!(
+            self.game.phase,
+            GamePhase::ChoosingWord { .. } | GamePhase::Drawing { .. } | GamePhase::RoundEnd { .. }
+        );
+        if game_active && self.players.len() < 2 {
+            self.end_game();
+        } else if was_current_drawer {
             self.end_round_abort();
         }
     }
@@ -435,10 +444,33 @@ impl Room {
             ClientMsg::Game(GameAction::Start { mode }) => self.handle_start_game(player, mode),
             ClientMsg::Game(GameAction::PickWord(idx)) => self.handle_pick_word(player, idx),
             ClientMsg::Game(GameAction::Clear) => self.handle_clear(player),
-            ClientMsg::Game(GameAction::Kick(_)) | ClientMsg::Hello(_) | ClientMsg::Pong { .. } => {
-                // Hello is connection setup; Kick is later phase work.
+            ClientMsg::Game(GameAction::Kick(target)) => self.handle_kick(player, target),
+            ClientMsg::Hello(_) | ClientMsg::Pong { .. } => {
+                // Hello is connection setup.
             }
         }
+    }
+
+    fn handle_kick(&mut self, sender: PlayerId, target: PlayerId) {
+        // Only the host can kick. Can't kick yourself. Target must exist.
+        if self.game.host != Some(sender) {
+            return;
+        }
+        if sender == target {
+            return;
+        }
+        if !self.players.contains_key(&target) {
+            return;
+        }
+        // Send Bye to the target before removing them. The unicast channel
+        // is buffered, so the message lands before unicast_tx is dropped
+        // (which happens inside handle_leave when the player slot is dropped).
+        if let Some(slot) = self.players.get(&target) {
+            let _ = slot.unicast_tx.try_send(Arc::new(ServerMsg::Bye {
+                reason: ByeReason::Kicked,
+            }));
+        }
+        self.handle_leave(target);
     }
 
     fn handle_clear(&mut self, player: PlayerId) {
