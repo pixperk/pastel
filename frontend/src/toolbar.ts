@@ -1,3 +1,4 @@
+import { showConfirm } from "./dialog";
 import {
   PALETTES,
   TOOLS,
@@ -120,9 +121,14 @@ export function mountToolbar(root: HTMLElement, handlers: ToolbarHandlers): void
   renderSwatches();
 
   clearBtn.addEventListener("click", () => {
-    if (window.confirm("Clear the canvas for everyone in the room?")) {
-      handlers.onClear();
-    }
+    void showConfirm({
+      title: "Clear the canvas?",
+      message: "Everyone in the room will lose what's been drawn.",
+      confirmLabel: "Clear it",
+      destructive: true,
+    }).then((ok) => {
+      if (ok) handlers.onClear();
+    });
   });
 
   function renderSwatches(): void {
