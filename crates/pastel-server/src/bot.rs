@@ -31,13 +31,6 @@ impl BotDifficulty {
             Self::Hard => (3.0, 10.0),
         }
     }
-    fn wrong_guesses_before(&self) -> u32 {
-        match self {
-            Self::Easy => rand::thread_rng().gen_range(2..=4),
-            Self::Medium => rand::thread_rng().gen_range(1..=2),
-            Self::Hard => 0,
-        }
-    }
     fn label(&self) -> &'static str {
         match self {
             Self::Easy => "chill",
@@ -87,14 +80,22 @@ fn load_drawings() -> HashMap<String, Drawing> {
 }
 
 static BOT_NAMES: &[&str] = &[
-    "Doodlebot",
-    "SketchBuddy",
-    "InkyPal",
-    "ScribbleFriend",
-    "PastelPal",
-    "DrawBot",
-    "ArtBot",
-    "PencilPal",
+    "lil crayon",
+    "soft pencil",
+    "chalky",
+    "lil pastel",
+    "smudge",
+    "doodlebug",
+    "inkbean",
+    "brushie",
+    "sketchy",
+    "pigment",
+    "blotch",
+    "scribbles",
+    "tintsy",
+    "hue",
+    "palette",
+    "swatch",
 ];
 
 static GREETINGS: &[&str] = &[
@@ -165,6 +166,24 @@ pub async fn add_bot(
     (StatusCode::OK, resp)
 }
 
+fn load_all_game_words() -> Vec<String> {
+    let easy = include_str!("../data/words-easy.txt");
+    let medium = include_str!("../data/words-medium.txt");
+    let hard = include_str!("../data/words-hard.txt");
+    let bot = include_str!("../data/words-bot.txt");
+    let mut words: Vec<String> = easy
+        .lines()
+        .chain(medium.lines())
+        .chain(hard.lines())
+        .chain(bot.lines())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.trim().to_string())
+        .collect();
+    words.sort();
+    words.dedup();
+    words
+}
+
 async fn run_bot(
     room: RoomHandle,
     code: RoomCode,
@@ -172,7 +191,7 @@ async fn run_bot(
     diff: BotDifficulty,
 ) -> anyhow::Result<()> {
     let drawings = load_drawings();
-    let bot_words: Vec<String> = drawings.keys().cloned().collect();
+    let all_words = load_all_game_words();
 
     let hello = Hello {
         room: code,
@@ -202,8 +221,9 @@ async fn run_bot(
 
     let mut is_drawer = false;
     let mut guess_candidates: Vec<String> = Vec::new();
-    let mut round_deadline: Option<tokio::time::Instant> = None;
+    let mut guess_index: usize = 0;
     let mut guess_sent = false;
+    let mut next_guess_at: Option<tokio::time::Instant> = None;
 
     // Drain welcome, then greet
     let _ = unicast_rx.recv().await;
@@ -223,9 +243,8 @@ async fn run_bot(
                         let idx = pick.min(words.len().saturating_sub(1));
                         room.send(my_id, ClientMsg::Game(GameAction::PickWord(idx as u8))).await;
                     }
-                    ServerMsg::DrawerWord { word, duration_ms } => {
+                    ServerMsg::DrawerWord { word, .. } => {
                         is_drawer = true;
-                        round_deadline = Some(tokio::time::Instant::now() + Duration::from_millis(*duration_ms as u64));
 
                         bot_chat(&room, my_id, random_from(REACT_MY_TURN)).await;
                         let word_lower = word.to_lowercase();
@@ -241,21 +260,29 @@ async fn run_bot(
             bc = broadcast_rx.recv() => {
                 let Ok(msg) = bc else { break };
                 match msg.as_ref() {
-                    ServerMsg::Game { event: GameEvent::RoundStart { drawer, duration_ms, word_mask, .. }, .. } => {
+                    ServerMsg::Game { event: GameEvent::RoundStart { drawer, word_mask, .. }, .. } => {
                         is_drawer = *drawer == my_id;
                         guess_sent = false;
+                        guess_index = 0;
                         guess_candidates.clear();
+                        next_guess_at = None;
                         if !is_drawer {
-                            round_deadline = Some(tokio::time::Instant::now() + Duration::from_millis(*duration_ms as u64));
                             let mask_len = word_mask.chars().filter(|c| *c != ' ').count();
-                            let mut candidates: Vec<String> = bot_words.iter()
+                            let mut candidates: Vec<String> = all_words.iter()
                                 .filter(|w| w.len() == mask_len || w.chars().count() == mask_len)
                                 .cloned()
                                 .collect();
                             use rand::seq::SliceRandom;
                             candidates.shuffle(&mut rand::thread_rng());
                             guess_candidates = candidates;
+                            let (lo, hi) = diff.guess_delay_secs();
+                            let first_wait = rand::thread_rng().gen_range(lo..hi);
+                            next_guess_at = Some(tokio::time::Instant::now() + Duration::from_secs_f64(first_wait));
                         }
+                    }
+                    ServerMsg::Guess { player, kind: GuessKind::Correct, .. } if *player == my_id => {
+                        guess_sent = true;
+                        next_guess_at = None;
                     }
                     ServerMsg::Game { event: GameEvent::HintReveal { mask }, .. } => {
                         if !is_drawer && !guess_sent {
@@ -275,13 +302,16 @@ async fn run_bot(
                     ServerMsg::Game { event: GameEvent::WordPickStarted { drawer, .. }, .. } => {
                         is_drawer = *drawer == my_id;
                         guess_candidates.clear();
+                        guess_index = 0;
                         guess_sent = false;
+                        next_guess_at = None;
                     }
                     ServerMsg::Game { event: GameEvent::RoundEnd { .. }, .. } => {
                         is_drawer = false;
                         guess_candidates.clear();
-                        round_deadline = None;
+                        guess_index = 0;
                         guess_sent = false;
+                        next_guess_at = None;
                         if rand::thread_rng().gen_bool(0.5) {
                             bot_chat(&room, my_id, random_from(REACT_ROUND_END)).await;
                         }
@@ -298,27 +328,34 @@ async fn run_bot(
                 }
             }
 
-            // Guessing timer
+            // Guessing: one candidate per tick, wait for result before next
             _ = async {
-                if is_drawer || guess_sent || guess_candidates.is_empty() || round_deadline.is_none() {
-                    return std::future::pending::<()>().await;
-                }
-                let (lo, hi) = diff.guess_delay_secs();
-                let wait_secs = rand::thread_rng().gen_range(lo..hi);
-                tokio::time::sleep(Duration::from_secs_f64(wait_secs)).await;
-            } => {
-                if !guess_candidates.is_empty() {
-                    let wrong_first = diff.wrong_guesses_before() as usize;
-                    let total = (wrong_first + 1).min(guess_candidates.len());
-                    for i in 0..total {
-                        let guess = guess_candidates[i].clone();
-                        room.send(my_id, ClientMsg::Guess { text: guess }).await;
-                        if i < total - 1 {
-                            let delay = rand::thread_rng().gen_range(2000..5000);
-                            tokio::time::sleep(Duration::from_millis(delay)).await;
-                        }
+                match next_guess_at {
+                    Some(t) if !is_drawer && !guess_sent && guess_index < guess_candidates.len() => {
+                        tokio::time::sleep_until(t).await;
                     }
-                    guess_sent = true;
+                    _ => std::future::pending::<()>().await,
+                }
+            } => {
+                if guess_index < guess_candidates.len() {
+                    let guess = guess_candidates[guess_index].clone();
+                    guess_index += 1;
+                    room.send(my_id, ClientMsg::Guess { text: guess }).await;
+                    let pause = match diff {
+                        BotDifficulty::Easy => rand::thread_rng().gen_range(4000..7000),
+                        BotDifficulty::Medium => rand::thread_rng().gen_range(2000..4000),
+                        BotDifficulty::Hard => rand::thread_rng().gen_range(800..1500),
+                    };
+                    next_guess_at = Some(tokio::time::Instant::now() + Duration::from_millis(pause));
+                    let max_tries = match diff {
+                        BotDifficulty::Easy => 3,
+                        BotDifficulty::Medium => 6,
+                        BotDifficulty::Hard => 12,
+                    };
+                    if guess_index >= max_tries {
+                        guess_sent = true;
+                        next_guess_at = None;
+                    }
                 }
             }
         }
@@ -329,35 +366,57 @@ async fn run_bot(
 }
 
 async fn replay_drawing(room: &RoomHandle, my_id: PlayerId, strokes: &[Vec<(u8, u8)>]) {
-    let scale_x = 960.0 / 256.0;
-    let scale_y = 600.0 / 256.0;
+    let pad_x = 80.0_f32;
+    let pad_y = 50.0_f32;
+    let usable_w = 960.0 - pad_x * 2.0;
+    let usable_h = 600.0 - pad_y * 2.0;
+
+    let scale = |rx: u8, ry: u8| -> (i32, i32) {
+        (
+            (pad_x + (rx as f32 / 255.0) * usable_w).round() as i32,
+            (pad_y + (ry as f32 / 255.0) * usable_h).round() as i32,
+        )
+    };
 
     for (sid, stroke) in strokes.iter().enumerate() {
         if stroke.is_empty() {
             continue;
         }
-        let origin_x = (stroke[0].0 as f32 * scale_x) as u16;
-        let origin_y = (stroke[0].1 as f32 * scale_y) as u16;
+
+        let (ox, oy) = scale(stroke[0].0, stroke[0].1);
+        let origin_x = ox.clamp(0, 960) as u16;
+        let origin_y = oy.clamp(0, 600) as u16;
 
         let mut points: Vec<Point> = Vec::new();
-        let mut prev = stroke[0];
-        for &(x, y) in &stroke[1..] {
-            let dx = (x as i16 - prev.0 as i16).clamp(-128, 127) as i8;
-            let dy = (y as i16 - prev.1 as i16).clamp(-128, 127) as i8;
-            points.push(Point {
-                dx,
-                dy,
-                dt: 16,
-                pressure: 200,
-            });
-            prev = (x, y);
+        let mut cur_x = ox;
+        let mut cur_y = oy;
 
-            if points.len() >= 60 {
+        for &(rx, ry) in &stroke[1..] {
+            let (tx, ty) = scale(rx, ry);
+            let mut rem_x = tx - cur_x;
+            let mut rem_y = ty - cur_y;
+
+            while rem_x != 0 || rem_y != 0 {
+                let dx = rem_x.clamp(-120, 120) as i8;
+                let dy = rem_y.clamp(-120, 120) as i8;
+                points.push(Point {
+                    dx,
+                    dy,
+                    dt: 16,
+                    pressure: 200,
+                });
+                cur_x += dx as i32;
+                cur_y += dy as i32;
+                rem_x = tx - cur_x;
+                rem_y = ty - cur_y;
+            }
+
+            if points.len() >= 50 {
                 let msg = ClientMsg::Stroke {
                     stroke_id: sid as u32,
                     origin: (origin_x, origin_y),
                     color: 0x2a2a2e,
-                    width: 4,
+                    width: 3,
                     points: std::mem::take(&mut points),
                     finished: false,
                 };
@@ -371,7 +430,7 @@ async fn replay_drawing(room: &RoomHandle, my_id: PlayerId, strokes: &[Vec<(u8, 
             stroke_id: sid as u32,
             origin: (origin_x, origin_y),
             color: 0x2a2a2e,
-            width: 4,
+            width: 3,
             points,
             finished: true,
         };
