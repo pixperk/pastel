@@ -3,6 +3,7 @@ import { pickNameAndAvatar } from "./avatarPicker";
 import { CHAT_BUCKET_CAPACITY, CHAT_BUCKET_REFILL_PER_SEC, TokenBucket } from "./bucket";
 import { DrawingSurface } from "./canvas";
 import { showCanvasEvent } from "./canvasEvent";
+import { showRoundIntro } from "./roundIntro";
 import { mountChat, type ChatPanel } from "./chat";
 import { showConfirm } from "./dialog";
 import { showToast } from "./toast";
@@ -604,6 +605,25 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       };
       pendingDrawerWord = null;
       pendingWordOptions = null;
+      // Cumulative scores so far, ranked. Players with no points get a 0
+      // row so the intro feels populated on round 1.
+      const ranked: { id: number; points: number }[] = [];
+      for (const id of players.keys()) {
+        ranked.push({ id, points: gameState.scores.get(id) ?? 0 });
+      }
+      ranked.sort((a, b) => b.points - a.points || a.id - b.id);
+      showRoundIntro({
+        roundIndex: event.round_index,
+        totalRounds: event.total_rounds,
+        drawerName: nameOf(event.drawer),
+        drawerAvatarHtml: avatarOf(event.drawer),
+        scores: ranked.map((r) => ({
+          id: r.id,
+          name: nameOf(r.id),
+          avatarHtml: avatarOf(r.id),
+          points: r.points,
+        })),
+      });
       renderGameUI();
       return;
     }
