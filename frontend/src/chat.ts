@@ -18,6 +18,7 @@ export interface ChatPanel {
   appendSystem(text: string, avatarHtml?: string): void;
   appendCorrectGuess(author: string, color: number, avatarHtml?: string): void;
   appendCloseGuess(): void;
+  setGuessMode(on: boolean): void;
   focus(): void;
   clear(): void;
 }
@@ -179,6 +180,20 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
       pill.textContent = "you're close";
       wrap.appendChild(pill);
       append(wrap);
+    },
+    setGuessMode(on) {
+      form.classList.toggle("chat-form--guessing", on);
+      let badge = form.querySelector<HTMLElement>(".chat-guess-badge");
+      if (on && !badge) {
+        badge = document.createElement("span");
+        badge.className = "chat-guess-badge";
+        badge.textContent = "guessing";
+        form.style.position = "relative";
+        form.appendChild(badge);
+      } else if (!on && badge) {
+        badge.remove();
+      }
+      input.placeholder = on ? "Type your guess..." : "Type a guess or chat";
     },
     focus() {
       input.focus();
