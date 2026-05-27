@@ -184,11 +184,14 @@ function renderPlayers(): void {
     const correctClass = correctGuessers.has(p.id) ? " players-li--correct" : "";
     return `<li class="${correctClass}">
       ${rankTag}
-      <span class="players-avatar">${renderAvatar(p.avatar)}</span>
+      <span class="players-avatar-wrap">
+        <span class="players-avatar">${renderAvatar(p.avatar)}</span>
+        ${kickBtn}
+      </span>
       <div class="players-info">
         <span class="players-name">${escapeHtml(p.name)}</span>
         <span class="players-meta">
-          ${youTag}${hostTag}${guessedTag}${scoreTag}${kickBtn}
+          ${youTag}${hostTag}${guessedTag}${scoreTag}
         </span>
       </div>
     </li>`;
@@ -639,7 +642,6 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       return;
     }
     case "RoundStart": {
-      correctGuessers.clear();
       const deadline = performance.now() + event.duration_ms;
       gameState.phase = {
         kind: "Drawing",
@@ -685,6 +687,7 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       }
       return;
     case "RoundEnd":
+      correctGuessers.clear();
       applyScores(gameState, event.scores);
       gameState.phase = {
         kind: "RoundEnd",
