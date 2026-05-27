@@ -81,6 +81,10 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
             <button type="button" class="lobby-bot" data-diff="easy">+ chill bot</button>
             <button type="button" class="lobby-bot" data-diff="medium">+ normal bot</button>
             <button type="button" class="lobby-bot" data-diff="hard">+ sweaty bot</button>
+          </span>
+          <span class="lobby-bot-tip-wrap">
+            <span class="lobby-bot-tip-trigger">how do bots work?</span>
+            <span class="lobby-bot-tip">Bots draw real human sketches from Google's Quick Draw dataset. They guess by matching the word mask and narrowing candidates as hints appear. They don't know the answer. Chill bots are patient, sweaty bots are relentless.</span>
           </span>` : ""}
         </div>
       </div>

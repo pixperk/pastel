@@ -506,6 +506,61 @@ canvas {
   border-color: var(--ink);
 }
 
+.lobby-bot-tip-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.lobby-bot-tip-trigger {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: default;
+  transition: opacity 120ms ease-out;
+}
+
+.lobby-bot-tip-trigger::before {
+  content: "? ";
+}
+
+.lobby-bot-tip-wrap:hover .lobby-bot-tip-trigger {
+  opacity: 1;
+}
+
+.lobby-bot-tip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 260px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+  text-align: left;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.lobby-bot-tip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--line);
+}
+
+.lobby-bot-tip-wrap:hover .lobby-bot-tip {
+  display: block;
+}
+
 .word-pick-head {
   margin-bottom: 18px;
   display: flex;
