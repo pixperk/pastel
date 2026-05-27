@@ -8,6 +8,8 @@
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
   --radius: 12px;
   --sidebar-w: 320px;
+  --font-body: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-display: "Fredoka", "Plus Jakarta Sans", sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -17,7 +19,7 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font-body);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
@@ -55,10 +57,15 @@ header {
 }
 
 h1 {
-  font-size: 20px;
+  font-family: var(--font-display);
+  font-size: 22px;
   font-weight: 600;
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.01em;
+}
+
+h2 {
+  font-family: var(--font-display);
 }
 
 .status {
@@ -96,6 +103,20 @@ h1 {
 .canvas-wrap {
   position: relative;
   width: 100%;
+}
+
+.canvas-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -18px;
+  border-radius: calc(var(--radius) + 18px);
+  background: radial-gradient(
+    ellipse at 50% 40%,
+    rgba(245, 218, 210, 0.35) 0%,
+    rgba(253, 251, 247, 0) 70%
+  );
+  pointer-events: none;
+  z-index: -1;
 }
 
 canvas {
@@ -148,9 +169,10 @@ canvas {
 .banner-mask {
   flex: 1 1 auto;
   text-align: center;
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 20px;
   font-weight: 600;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.22em;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
   white-space: pre;
@@ -159,9 +181,10 @@ canvas {
 
 .banner-timer {
   flex-shrink: 0;
+  font-family: var(--font-display);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 17px;
   min-width: 42px;
   text-align: right;
   color: var(--ink);
@@ -174,15 +197,19 @@ canvas {
 #gameOverlay {
   position: absolute;
   inset: 0;
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+  overflow-y: auto;
+  padding: 12px;
 }
 
 #gameOverlay.game-overlay--visible {
-  display: flex;
   pointer-events: auto;
+  opacity: 1;
   background: rgba(253, 251, 247, 0.78);
   backdrop-filter: blur(2px);
   border-radius: var(--radius);
@@ -201,6 +228,12 @@ canvas {
   padding: 24px 28px;
   max-width: 80%;
   text-align: center;
+  animation: overlay-card-in 240ms cubic-bezier(0.16, 1.2, 0.4, 1);
+}
+
+@keyframes overlay-card-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .overlay-card h2 {
@@ -302,7 +335,6 @@ canvas {
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  width: 56px;
 }
 
 .lobby-player-avatar {
@@ -324,13 +356,9 @@ canvas {
 }
 
 .lobby-player-name {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink);
   text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 56px;
 }
 
 .lobby-actions {
@@ -444,9 +472,10 @@ canvas {
 }
 
 .word-pick-word {
+  font-family: var(--font-display);
   font-size: 18px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   color: var(--ink);
 }
 
@@ -494,12 +523,123 @@ canvas {
 .podium-3 { background: #f7e6db; }
 
 .podium-rank {
+  font-family: var(--font-display);
   font-weight: 700;
   color: var(--muted);
 }
 
 .podium-name { text-align: left; font-weight: 500; }
 .podium-score { font-weight: 700; }
+
+/* ---------- game-over scoreboard ---------- */
+
+.overlay-card--gameover {
+  max-width: min(480px, 92%);
+  text-align: left;
+}
+
+.gameover-sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin: -8px 0 6px;
+}
+
+.go-board {
+  list-style: none;
+  margin: 4px 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.go-row {
+  display: grid;
+  grid-template-columns: 28px 32px 1fr minmax(60px, 120px) 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  opacity: 0;
+  transform: translateY(6px);
+  animation: go-row-in 360ms cubic-bezier(0.2, 1.2, 0.4, 1) forwards;
+  animation-delay: calc(150ms + var(--row-i, 0) * 70ms);
+}
+
+@keyframes go-row-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.go-rank {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.go-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.go-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.go-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.go-bar-wrap {
+  height: 8px;
+  background: var(--bg);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.go-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  width: 0;
+  animation: go-bar-fill 700ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(300ms + var(--row-i, 0) * 70ms);
+}
+
+@keyframes go-bar-fill {
+  to { width: var(--bar-pct, 0%); }
+}
+
+.go-score {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 
 .rematch-btn {
   border: none;
@@ -782,6 +922,25 @@ canvas {
   height: 100%;
   display: block;
 }
+
+.players-avatar {
+  animation: avatar-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes avatar-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+.lobby-player-avatar {
+  animation: avatar-breathe 2.4s ease-in-out infinite;
+}
+
+.lobby-player:nth-child(2) .lobby-player-avatar { animation-delay: 0.3s; }
+.lobby-player:nth-child(3) .lobby-player-avatar { animation-delay: 0.6s; }
+.lobby-player:nth-child(4) .lobby-player-avatar { animation-delay: 0.9s; }
+.lobby-player:nth-child(5) .lobby-player-avatar { animation-delay: 1.2s; }
+.lobby-player:nth-child(6) .lobby-player-avatar { animation-delay: 1.5s; }
 
 /* Inline initials chip used when we never had an avatar for an id. */
 .avatar-fallback {
@@ -1075,6 +1234,7 @@ canvas {
 }
 
 .round-intro-drawer-name {
+  font-family: var(--font-display);
   font-size: 18px;
   font-weight: 700;
   color: var(--ink);
@@ -1304,6 +1464,19 @@ canvas {
   text-overflow: ellipsis;
 }
 
+.players-guessed {
+  color: #4caf50;
+  font-size: 13px;
+  font-weight: 700;
+  margin-left: 2px;
+  animation: guessed-pop 300ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes guessed-pop {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 .players-score {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
@@ -1313,6 +1486,17 @@ canvas {
   padding: 1px 8px;
   border-radius: 999px;
   font-size: 12px;
+  transition: transform 180ms ease-out;
+}
+
+.players-score--pop {
+  animation: score-pop 400ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes score-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.25); color: #b76e79; }
+  100% { transform: scale(1); }
 }
 
 /* --- chat panel --- */
@@ -1461,6 +1645,32 @@ canvas {
 
 .chat-input::placeholder { color: #b0a99d; }
 
+.chat-form--guessing .chat-input {
+  border-color: #d5c6e0;
+  background: #fcfaff;
+}
+
+.chat-form--guessing .chat-input:focus {
+  border-color: #a88cc4;
+  box-shadow: 0 0 0 3px rgba(168, 140, 196, 0.12);
+}
+
+.chat-guess-badge {
+  position: absolute;
+  top: -8px;
+  left: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #a88cc4;
+  background: #fcfaff;
+  border: 1px solid #d5c6e0;
+  border-radius: 999px;
+  padding: 1px 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
 .chat-input--rate-limited {
   animation: shake 260ms ease;
   border-color: #b54434;
@@ -1554,6 +1764,59 @@ canvas {
   }
 
   h1 { font-size: 18px; }
+
+  /* On mobile the canvas aspect-ratio makes it too short for tall overlays
+     (word pick, game over). Switch to fixed positioning so the overlay
+     covers the viewport and scrolls naturally. */
+  #gameOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    padding: 16px;
+  }
+
+  .overlay-card { padding: 18px 16px; max-width: 94%; }
+  .overlay-card--wide { min-width: 0; max-width: 96%; }
+  .overlay-card--lobby { max-width: 96%; }
+  .overlay-card--gameover { max-width: 96%; }
+
+  .word-pick-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .word-pick-card {
+    padding: 10px 12px;
+    border-radius: 10px;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+  .word-pick-word { font-size: 15px; }
+  .word-pick-num { font-size: 10px; }
+  .word-pick-head { margin-bottom: 10px; }
+
+  .picker-card {
+    width: 100%;
+    max-height: 96vh;
+    padding: 16px;
+    border-radius: 12px;
+  }
+  .picker-svg { width: 88px; height: 88px; }
+  .picker-options {
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    max-height: 200px;
+  }
+  .picker { padding: 12px; }
+
+  .round-intro-host { top: 60px; width: min(360px, calc(100vw - 24px)); }
+  .canvas-event-host { top: 60px; }
+  .toast-host { top: 10px; right: 10px; }
+
+  .go-row { grid-template-columns: 24px 28px 1fr 40px 36px; gap: 6px; padding: 6px 8px; }
+  .go-rank { width: 24px; height: 24px; font-size: 11px; }
+  .go-avatar { width: 28px; height: 28px; }
+  .go-name { font-size: 12px; }
+  .go-score { font-size: 13px; }
 }
 
 @media (max-width: 400px) {
