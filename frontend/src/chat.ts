@@ -42,12 +42,12 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
       <h2>Chat</h2>
     </header>
     <div class="chat-scroll" role="log" aria-live="polite" aria-atomic="false">
-      <div class="chat-empty">No messages yet. Say hi.</div>
+      <div class="chat-empty">Quiet in here. Say something!</div>
     </div>
     <form class="chat-form" novalidate>
       <label class="sr-only" for="chat-input-field">Chat message</label>
       <input id="chat-input-field" class="chat-input" type="text"
-             maxlength="${MAX_CHAT_LEN}" placeholder="Type a guess or chat"
+             maxlength="${MAX_CHAT_LEN}" placeholder="Say something..."
              autocomplete="off" autocorrect="off" autocapitalize="sentences"
              enterkeyhint="send" />
       <button type="submit" class="chat-send" aria-label="Send" disabled>
@@ -167,7 +167,7 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
       const a = document.createElement("strong");
       a.style.color = rgbToCss(color);
       a.textContent = author;
-      label.append(a, document.createTextNode(" guessed correctly"));
+      label.append(a, document.createTextNode(" got it!"));
       pill.appendChild(label);
       wrap.appendChild(pill);
       append(wrap);
@@ -177,7 +177,7 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
       wrap.className = "chat-system";
       const pill = document.createElement("span");
       pill.className = "chat-pill chat-pill--close";
-      pill.textContent = "you're close";
+      pill.textContent = "so close!";
       wrap.appendChild(pill);
       append(wrap);
     },
@@ -193,7 +193,7 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
       } else if (!on && badge) {
         badge.remove();
       }
-      input.placeholder = on ? "Type your guess..." : "Type a guess or chat";
+      input.placeholder = on ? "What is it?" : "Say something...";
     },
     focus() {
       input.focus();
