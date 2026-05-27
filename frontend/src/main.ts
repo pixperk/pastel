@@ -140,6 +140,8 @@ const gameState: GameState = emptyState();
 // phase whenever the matching broadcast lands.
 let pendingWordOptions: string[] | null = null;
 let pendingDrawerWord: string | null = null;
+const prevScores = new Map<number, number>();
+const correctGuessers = new Set<number>();
 
 function nameOf(id: number, fallback = "anon"): string {
   return players.get(id)?.name ?? nameHistory.get(id) ?? fallback;
@@ -154,8 +156,12 @@ function renderPlayers(): void {
   const items = Array.from(players.values()).map((p) => {
     const color = rgbToCss(colorOf(p.id));
     const score = gameState.scores.get(p.id);
+    const prev = prevScores.get(p.id);
+    const changed = score !== undefined && prev !== undefined && score !== prev;
     const scoreTag =
-      score !== undefined ? `<span class="players-score">${score}</span>` : "";
+      score !== undefined
+        ? `<span class="players-score${changed ? " players-score--pop" : ""}" data-pid="${p.id}">${score}</span>`
+        : "";
     const youTag = p.id === youId ? '<span class="players-you">(you)</span>' : "";
     const hostTag =
       p.id === gameState.host ? '<span class="players-host">host</span>' : "";
@@ -165,11 +171,14 @@ function renderPlayers(): void {
             p.name,
           )} from the room" aria-label="Remove ${escapeHtml(p.name)}">×</button>`
         : "";
+    const guessedTag = correctGuessers.has(p.id)
+      ? '<span class="players-guessed" title="Guessed correctly">✓</span>'
+      : "";
     return `<li>
       <span class="players-avatar">${renderAvatar(p.avatar)}</span>
       <span class="swatch" style="background:${color}"></span>
       <span class="players-name">${escapeHtml(p.name)}</span>
-      ${youTag}${hostTag}${scoreTag}${kickBtn}
+      ${youTag}${hostTag}${guessedTag}${scoreTag}${kickBtn}
     </li>`;
   });
   const pendingItems =
@@ -244,6 +253,9 @@ function renderPlayers(): void {
       });
     });
   }
+  // Snapshot scores so the next render can detect changes for the pop.
+  prevScores.clear();
+  for (const [id, v] of gameState.scores) prevScores.set(id, v);
 }
 
 const chatBucket = new TokenBucket(CHAT_BUCKET_CAPACITY, CHAT_BUCKET_REFILL_PER_SEC);
@@ -309,6 +321,9 @@ function renderGameUI(): void {
     onCopyInvite: copyInviteLink,
   });
   updateBanner();
+  const isGuessing =
+    gameState.phase.kind === "Drawing" && gameState.phase.drawer !== youId;
+  chat.setGuessMode(isGuessing);
 }
 
 async function copyInviteLink(): Promise<void> {
@@ -521,6 +536,8 @@ function handleMessage(msg: ServerMsg): void {
       return;
     case "Guess":
       if (msg.guess === "Correct") {
+        correctGuessers.add(msg.player);
+        renderPlayers();
         chat.appendCorrectGuess(
           nameOf(msg.player),
           colorOf(msg.player),
@@ -610,6 +627,7 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       return;
     }
     case "RoundStart": {
+      correctGuessers.clear();
       const deadline = performance.now() + event.duration_ms;
       gameState.phase = {
         kind: "Drawing",
