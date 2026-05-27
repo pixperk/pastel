@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#fdfbf7" />
-    <title>pastel</title>
+    <title>pastel -- draw, guess, laugh</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -13,10 +13,13 @@
   <body>
     <main>
       <header>
-        <h1>pastel</h1>
-        <div id="status" class="status">connecting…</div>
+        <h1 class="logo"><span class="logo-text">pastel</span></h1>
+        <div id="status" class="status">finding the room...</div>
       </header>
       <div class="workspace">
+        <aside class="sidebar sidebar--left">
+          <div id="players" class="players"></div>
+        </aside>
         <section class="stage">
           <div id="toolbar"></div>
           <div id="banner" class="banner banner--hidden"></div>
@@ -25,8 +28,7 @@
             <div id="gameOverlay"></div>
           </div>
         </section>
-        <aside class="sidebar">
-          <div id="players" class="players"></div>
+        <aside class="sidebar sidebar--right">
           <div id="chat"></div>
         </aside>
       </div>
