@@ -33,12 +33,25 @@ impl AppState {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    let api = Router::new()
         .route("/healthz", get(healthz))
         .route("/metrics", get(metrics))
         .route("/ws/:code", get(ws::ws_handler))
         .route("/bot/:code", post(bot::add_bot))
-        .with_state(state)
+        .with_state(state);
+
+    // In production, serve the frontend dist/ folder as a static fallback.
+    // In dev, Vite serves the frontend and proxies API calls to us.
+    let dist_dir = std::env::var("PASTEL_DIST_DIR").unwrap_or_else(|_| "frontend/dist".into());
+    let dist_path = std::path::PathBuf::from(&dist_dir);
+    if dist_path.join("index.html").exists() {
+        tracing::info!(path = %dist_dir, "serving static frontend");
+        api.fallback_service(tower_http::services::ServeDir::new(&dist_dir).fallback(
+            tower_http::services::ServeFile::new(dist_path.join("index.html")),
+        ))
+    } else {
+        api
+    }
 }
 
 async fn healthz() -> &'static str {

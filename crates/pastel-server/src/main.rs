@@ -34,7 +34,11 @@ async fn main() -> anyhow::Result<()> {
 
     let app = build_router(AppState::new(wordlists));
 
-    let addr: SocketAddr = "0.0.0.0:7070".parse()?;
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(7070);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "pastel-server listening");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
