@@ -1,5 +1,7 @@
 use pastel_proto::*;
-use pastel_room::{spawn_room, JoinError, JoinResult, RoomHandle, WordLists, MAX_PLAYERS_PER_ROOM};
+use pastel_room::{
+    spawn_room, JoinError, JoinOutcome, JoinResult, RoomHandle, WordLists, MAX_PLAYERS_PER_ROOM,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver as BroadcastRx;
@@ -21,11 +23,15 @@ fn hello(name: &str) -> Hello {
         room: code(),
         name: name.into(),
         resume_from: None,
+        client_token: None,
     }
 }
 
 async fn join(handle: &RoomHandle, name: &str) -> JoinResult {
-    handle.join(hello(name)).await.unwrap()
+    match handle.join(hello(name)).await.unwrap() {
+        JoinOutcome::Joined(j) => j,
+        JoinOutcome::Pending { .. } => panic!("unexpected pending join in test helper"),
+    }
 }
 
 async fn next(rx: &mut BroadcastRx<Arc<ServerMsg>>) -> Arc<ServerMsg> {

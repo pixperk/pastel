@@ -6,14 +6,24 @@ pub struct Hello {
     pub room: RoomCode,
     pub name: String,
     pub resume_from: Option<Seq>,
+    /// Persistent per-browser token. Used to recognise a previously-kicked
+    /// player coming back, so the server can gate them behind host approval
+    /// instead of admitting them silently. Optional for backwards-compat.
+    pub client_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GameAction {
-    Start { mode: GameMode },
+    Start {
+        mode: GameMode,
+    },
     PickWord(u8),
     Kick(PlayerId),
     Clear,
+    /// Host approves a pending join request.
+    ApproveJoin(PlayerId),
+    /// Host rejects a pending join request.
+    RejectJoin(PlayerId),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,6 +53,15 @@ pub enum GameEvent {
     },
     HintReveal {
         mask: String,
+    },
+    /// A previously-kicked player wants back in. Only the host can approve.
+    JoinRequest {
+        candidate: PlayerId,
+        name: String,
+    },
+    /// A pending candidate gave up (closed the tab) before the host responded.
+    JoinCanceled {
+        candidate: PlayerId,
     },
 }
 
@@ -141,4 +160,6 @@ pub enum ServerMsg {
         word: String,
         duration_ms: u32,
     },
+    /// Unicast to a candidate whose join is waiting on host approval.
+    JoinPending,
 }

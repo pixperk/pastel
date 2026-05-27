@@ -61,6 +61,7 @@ fn hello(name: &str) -> ClientMsg {
         room: RoomCode::parse("ABC234").unwrap(),
         name: name.into(),
         resume_from: None,
+        client_token: None,
     })
 }
 

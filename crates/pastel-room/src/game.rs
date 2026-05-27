@@ -103,6 +103,49 @@ pub fn ranked_scores(scores: &AHashMap<PlayerId, u32>) -> Vec<(PlayerId, u32)> {
     v
 }
 
+/// Iterative Levenshtein with one allocation, ASCII-only fast path.
+pub fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for (i, ac) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, bc) in b.iter().enumerate() {
+            let cost = if ac == bc { 0 } else { 1 };
+            curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// Is `guess` close (but not exact) to `word`? Threshold scales with length:
+/// short words must be off by exactly 1, longer words tolerate 2.
+/// Case-insensitive, whitespace-trimmed.
+pub fn is_close_guess(guess: &str, word: &str) -> bool {
+    let g = guess.trim().to_lowercase();
+    let w = word.trim().to_lowercase();
+    if g.is_empty() || w.is_empty() {
+        return false;
+    }
+    let d = edit_distance(&g, &w);
+    if d == 0 {
+        return false; // exact match is "correct", not "close"
+    }
+    if w.chars().count() < 4 {
+        d == 1
+    } else {
+        d <= 2
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +223,33 @@ mod tests {
     #[test]
     fn rotation_empty_returns_none() {
         assert_eq!(drawer_for_round(&[], 0), None);
+    }
+
+    #[test]
+    fn edit_distance_basics() {
+        assert_eq!(edit_distance("", ""), 0);
+        assert_eq!(edit_distance("cat", "cat"), 0);
+        assert_eq!(edit_distance("cat", "bat"), 1);
+        assert_eq!(edit_distance("cat", "cats"), 1);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+    }
+
+    #[test]
+    fn close_guess_threshold_by_length() {
+        // Short words: exactly 1 edit
+        assert!(is_close_guess("cat", "bat"));
+        assert!(!is_close_guess("cat", "dog"));
+        // Longer words: up to 2 edits
+        assert!(is_close_guess("apple", "appls"));
+        assert!(is_close_guess("apple", "appls!"));
+        assert!(!is_close_guess("apple", "orange"));
+        // Exact match is NOT close
+        assert!(!is_close_guess("apple", "apple"));
+        // Case-insensitive and trim
+        assert!(is_close_guess("  APPLE  ", "appls"));
+        // Empty inputs are never close
+        assert!(!is_close_guess("", "cat"));
+        assert!(!is_close_guess("cat", ""));
     }
 
     #[test]

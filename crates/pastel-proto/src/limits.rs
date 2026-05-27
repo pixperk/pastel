@@ -5,6 +5,7 @@ pub const MAX_PLAYERS_PER_ROOM: usize = 10;
 
 pub const MAX_NAME_LEN: usize = 32;
 pub const MAX_CHAT_LEN: usize = 256;
+pub const MAX_CLIENT_TOKEN_LEN: usize = 64;
 pub const MAX_GUESS_LEN: usize = 64;
 pub const MAX_WORD_LEN: usize = 64;
 

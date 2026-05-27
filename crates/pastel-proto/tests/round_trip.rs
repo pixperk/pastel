@@ -147,11 +147,13 @@ fn arb_hello() -> impl Strategy<Value = Hello> {
         arb_room_code(),
         arb_name(),
         proptest::option::of(any::<u64>()),
+        proptest::option::of(arb_text(MAX_CLIENT_TOKEN_LEN)),
     )
-        .prop_map(|(room, name, resume_from)| Hello {
+        .prop_map(|(room, name, resume_from, client_token)| Hello {
             room,
             name,
             resume_from,
+            client_token,
         })
 }
 
@@ -169,6 +171,8 @@ fn arb_game_action() -> impl Strategy<Value = GameAction> {
         any::<u8>().prop_map(GameAction::PickWord),
         any::<u32>().prop_map(GameAction::Kick),
         Just(GameAction::Clear),
+        any::<u32>().prop_map(GameAction::ApproveJoin),
+        any::<u32>().prop_map(GameAction::RejectJoin),
     ]
 }
 
@@ -209,6 +213,9 @@ fn arb_game_event() -> impl Strategy<Value = GameEvent> {
             },
         ),
         arb_text(MAX_WORD_LEN).prop_map(|mask| GameEvent::HintReveal { mask }),
+        (any::<u32>(), arb_name())
+            .prop_map(|(candidate, name)| GameEvent::JoinRequest { candidate, name }),
+        any::<u32>().prop_map(|candidate| GameEvent::JoinCanceled { candidate }),
     ]
 }
 
@@ -312,6 +319,7 @@ fn arb_server_leaf_msg() -> impl Strategy<Value = ServerMsg> {
             .prop_map(|(words, deadline_ms)| ServerMsg::WordOptions { words, deadline_ms },),
         (arb_text(MAX_WORD_LEN), any::<u32>())
             .prop_map(|(word, duration_ms)| ServerMsg::DrawerWord { word, duration_ms }),
+        Just(ServerMsg::JoinPending),
     ]
 }
 
@@ -398,6 +406,7 @@ fn validation_rejects_oversize_name() {
         room: RoomCode::parse("ABC234").unwrap(),
         name: "a".repeat(MAX_NAME_LEN + 1),
         resume_from: None,
+        client_token: None,
     });
     let bytes = encode(&msg).unwrap();
     let err = decode_client_validated(&bytes).unwrap_err();

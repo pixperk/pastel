@@ -1,7 +1,7 @@
 use crate::bucket::TokenBucket;
 use crate::game::{
-    build_mask, drawer_bonus, guess_score, max_hints, pick_hint_index, ranked_scores, reveal_at,
-    DRAW_WINDOW, HINT_REMAINING_SECS, PICK_WINDOW, ROUND_REVEAL,
+    build_mask, drawer_bonus, guess_score, is_close_guess, max_hints, pick_hint_index,
+    ranked_scores, reveal_at, DRAW_WINDOW, HINT_REMAINING_SECS, PICK_WINDOW, ROUND_REVEAL,
 };
 use crate::words::{Difficulty, SharedWords};
 use crate::{
@@ -23,10 +23,13 @@ const GUESS_REFILL_PER_SEC: f32 = 10.0 / 3.0;
 pub enum RoomCmd {
     Join {
         hello: Hello,
-        reply: oneshot::Sender<Result<JoinResult, JoinError>>,
+        reply: oneshot::Sender<Result<JoinOutcome, JoinError>>,
     },
     Leave {
         player: PlayerId,
+    },
+    CancelPending {
+        candidate: PlayerId,
     },
     FromClient {
         player: PlayerId,
@@ -46,6 +49,21 @@ pub struct JoinResult {
     pub broadcast_rx: broadcast::Receiver<Arc<ServerMsg>>,
 }
 
+/// Either an immediate join, or a pending request that needs host approval.
+/// Pending is only used when a previously-kicked client_token tries to rejoin.
+pub enum JoinOutcome {
+    Joined(JoinResult),
+    Pending {
+        candidate: PlayerId,
+        approval_rx: oneshot::Receiver<ApprovalResult>,
+    },
+}
+
+pub enum ApprovalResult {
+    Approved(JoinResult),
+    Rejected,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum JoinError {
     #[error("room is full")]
@@ -60,7 +78,7 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
-    pub async fn join(&self, hello: Hello) -> Result<JoinResult, JoinError> {
+    pub async fn join(&self, hello: Hello) -> Result<JoinOutcome, JoinError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(RoomCmd::Join { hello, reply: tx })
@@ -75,6 +93,10 @@ impl RoomHandle {
 
     pub async fn leave(&self, player: PlayerId) {
         let _ = self.cmd_tx.send(RoomCmd::Leave { player }).await;
+    }
+
+    pub async fn cancel_pending(&self, candidate: PlayerId) {
+        let _ = self.cmd_tx.send(RoomCmd::CancelPending { candidate }).await;
     }
 
     pub async fn set_secret(&self, drawer: PlayerId, word: impl Into<String>) {
@@ -101,6 +123,13 @@ struct PlayerSlot {
     unicast_tx: mpsc::Sender<Arc<ServerMsg>>,
     chat_bucket: TokenBucket,
     guess_bucket: TokenBucket,
+    client_token: Option<String>,
+}
+
+struct PendingJoiner {
+    name: String,
+    client_token: String,
+    reply_tx: oneshot::Sender<ApprovalResult>,
 }
 
 #[derive(Default)]
@@ -186,6 +215,11 @@ struct Room {
     game: GameState,
     words: SharedWords,
     broadcast_tx: broadcast::Sender<Arc<ServerMsg>>,
+    /// Tokens that have been kicked from this room. A reconnect carrying one
+    /// of these is routed through host approval before being admitted.
+    kicked_tokens: HashSet<String>,
+    /// Candidates currently waiting for the host to approve their rejoin.
+    pending: AHashMap<PlayerId, PendingJoiner>,
 }
 
 impl Room {
@@ -205,6 +239,8 @@ impl Room {
             game: GameState::default(),
             words,
             broadcast_tx,
+            kicked_tokens: HashSet::new(),
+            pending: AHashMap::new(),
         }
     }
 
@@ -228,6 +264,7 @@ impl Room {
         match cmd {
             RoomCmd::Join { hello, reply } => self.handle_join(hello, reply),
             RoomCmd::Leave { player } => self.handle_leave(player),
+            RoomCmd::CancelPending { candidate } => self.handle_cancel_pending(candidate),
             RoomCmd::FromClient { player, msg } => self.handle_client_msg(player, msg),
             RoomCmd::SetSecret { drawer, word } => self.handle_set_secret(drawer, word),
         }
@@ -323,7 +360,11 @@ impl Room {
 
     // ---- join / leave / presence -----------------------------------------
 
-    fn handle_join(&mut self, hello: Hello, reply: oneshot::Sender<Result<JoinResult, JoinError>>) {
+    fn handle_join(
+        &mut self,
+        hello: Hello,
+        reply: oneshot::Sender<Result<JoinOutcome, JoinError>>,
+    ) {
         if self.players.len() >= MAX_PLAYERS_PER_ROOM {
             let _ = reply.send(Err(JoinError::RoomFull));
             return;
@@ -332,6 +373,49 @@ impl Room {
         let id = self.next_player_id;
         self.next_player_id = self.next_player_id.wrapping_add(1);
 
+        // A previously-kicked client_token must be approved by the host before
+        // being readmitted. Stash a pending entry and broadcast a JoinRequest;
+        // the candidate gets back an `approval_rx` to await on.
+        if let Some(token) = hello.client_token.as_ref() {
+            if self.kicked_tokens.contains(token) {
+                let (approval_tx, approval_rx) = oneshot::channel();
+                self.pending.insert(
+                    id,
+                    PendingJoiner {
+                        name: hello.name.clone(),
+                        client_token: token.clone(),
+                        reply_tx: approval_tx,
+                    },
+                );
+                let seq = self.next_seq();
+                self.broadcast(ServerMsg::Game {
+                    seq,
+                    event: GameEvent::JoinRequest {
+                        candidate: id,
+                        name: hello.name,
+                    },
+                });
+                let _ = reply.send(Ok(JoinOutcome::Pending {
+                    candidate: id,
+                    approval_rx,
+                }));
+                return;
+            }
+        }
+
+        let join = self.admit_player(id, hello.name, hello.client_token);
+        let _ = reply.send(Ok(JoinOutcome::Joined(join)));
+    }
+
+    /// Allocate the slot, send Welcome, broadcast Presence, and return the
+    /// per-connection channels. Shared by the direct-join and approved-pending
+    /// paths.
+    fn admit_player(
+        &mut self,
+        id: PlayerId,
+        name: String,
+        client_token: Option<String>,
+    ) -> JoinResult {
         // First joiner becomes host. Host status only changes if the
         // current host has left (see handle_leave).
         if self.game.host.is_none() {
@@ -352,10 +436,11 @@ impl Room {
         self.players.insert(
             id,
             PlayerSlot {
-                name: hello.name.clone(),
+                name: name.clone(),
                 unicast_tx: uc_tx,
                 chat_bucket: TokenBucket::new(CHAT_BUCKET_CAPACITY, CHAT_REFILL_PER_SEC),
                 guess_bucket: TokenBucket::new(GUESS_BUCKET_CAPACITY, GUESS_REFILL_PER_SEC),
+                client_token,
             },
         );
 
@@ -366,20 +451,56 @@ impl Room {
             self.game.scores.entry(id).or_insert(0);
         }
 
-        let _ = reply.send(Ok(JoinResult {
-            you: id,
-            unicast_rx: uc_rx,
-            broadcast_rx: bc_rx,
-        }));
-
         let seq = self.next_seq();
         self.broadcast(ServerMsg::Presence {
             seq,
-            joined: vec![Player {
-                id,
-                name: hello.name,
-            }],
+            joined: vec![Player { id, name }],
             left: vec![],
+        });
+
+        JoinResult {
+            you: id,
+            unicast_rx: uc_rx,
+            broadcast_rx: bc_rx,
+        }
+    }
+
+    fn handle_cancel_pending(&mut self, candidate: PlayerId) {
+        if self.pending.remove(&candidate).is_none() {
+            return;
+        }
+        let seq = self.next_seq();
+        self.broadcast(ServerMsg::Game {
+            seq,
+            event: GameEvent::JoinCanceled { candidate },
+        });
+    }
+
+    fn handle_approve_join(&mut self, sender: PlayerId, candidate: PlayerId) {
+        if self.game.host != Some(sender) {
+            return;
+        }
+        let Some(pj) = self.pending.remove(&candidate) else {
+            return;
+        };
+        // They're back in good standing; clear their kick mark.
+        self.kicked_tokens.remove(&pj.client_token);
+        let join = self.admit_player(candidate, pj.name, Some(pj.client_token));
+        let _ = pj.reply_tx.send(ApprovalResult::Approved(join));
+    }
+
+    fn handle_reject_join(&mut self, sender: PlayerId, candidate: PlayerId) {
+        if self.game.host != Some(sender) {
+            return;
+        }
+        let Some(pj) = self.pending.remove(&candidate) else {
+            return;
+        };
+        let _ = pj.reply_tx.send(ApprovalResult::Rejected);
+        let seq = self.next_seq();
+        self.broadcast(ServerMsg::Game {
+            seq,
+            event: GameEvent::JoinCanceled { candidate },
         });
     }
 
@@ -445,6 +566,12 @@ impl Room {
             ClientMsg::Game(GameAction::PickWord(idx)) => self.handle_pick_word(player, idx),
             ClientMsg::Game(GameAction::Clear) => self.handle_clear(player),
             ClientMsg::Game(GameAction::Kick(target)) => self.handle_kick(player, target),
+            ClientMsg::Game(GameAction::ApproveJoin(candidate)) => {
+                self.handle_approve_join(player, candidate)
+            }
+            ClientMsg::Game(GameAction::RejectJoin(candidate)) => {
+                self.handle_reject_join(player, candidate)
+            }
             ClientMsg::Hello(_) | ClientMsg::Pong { .. } => {
                 // Hello is connection setup.
             }
@@ -459,17 +586,20 @@ impl Room {
         if sender == target {
             return;
         }
-        if !self.players.contains_key(&target) {
+        let Some(slot) = self.players.get(&target) else {
             return;
+        };
+        // Remember the kicked token so that a reconnect from the same browser
+        // is routed through host approval instead of being admitted silently.
+        if let Some(tok) = slot.client_token.clone() {
+            self.kicked_tokens.insert(tok);
         }
         // Send Bye to the target before removing them. The unicast channel
         // is buffered, so the message lands before unicast_tx is dropped
         // (which happens inside handle_leave when the player slot is dropped).
-        if let Some(slot) = self.players.get(&target) {
-            let _ = slot.unicast_tx.try_send(Arc::new(ServerMsg::Bye {
-                reason: ByeReason::Kicked,
-            }));
-        }
+        let _ = slot.unicast_tx.try_send(Arc::new(ServerMsg::Bye {
+            reason: ByeReason::Kicked,
+        }));
         self.handle_leave(target);
     }
 
@@ -581,6 +711,25 @@ impl Room {
                     self.end_round_completed();
                 }
             }
+            GuessOutcome::Close => {
+                // Everyone sees the guess as chat (so they don't repeat it),
+                // but only the guesser gets the "close" hint pill.
+                let seq = self.next_seq();
+                self.broadcast(ServerMsg::Chat {
+                    seq,
+                    player,
+                    text: text.clone(),
+                });
+                let seq2 = self.next_seq();
+                self.unicast(
+                    player,
+                    ServerMsg::Guess {
+                        seq: seq2,
+                        player,
+                        kind: GuessKind::Close,
+                    },
+                );
+            }
             GuessOutcome::Wrong | GuessOutcome::NotInGame => {
                 let seq = self.next_seq();
                 self.broadcast(ServerMsg::Chat { seq, player, text });
@@ -609,7 +758,11 @@ impl Room {
                     return GuessOutcome::AlreadyCorrect;
                 }
                 if !text.trim().eq_ignore_ascii_case(word.trim()) {
-                    return GuessOutcome::Wrong;
+                    return if is_close_guess(text, word) {
+                        GuessOutcome::Close
+                    } else {
+                        GuessOutcome::Wrong
+                    };
                 }
 
                 let now = Instant::now();
@@ -1048,6 +1201,7 @@ impl Room {
 
 enum GuessOutcome {
     Correct { everyone_guessed: bool },
+    Close,
     Wrong,
     NotInGame,
     DrawerSelfGuess,

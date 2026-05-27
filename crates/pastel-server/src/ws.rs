@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use pastel_proto::{
     decode_client_validated, encode, ByeReason, ClientMsg, Hello, RoomCode, ServerMsg,
 };
-use pastel_room::{JoinError, RoomHandle};
+use pastel_room::{ApprovalResult, JoinError, JoinOutcome, JoinResult, RoomHandle};
 use tokio::sync::broadcast::error::RecvError as BroadcastRecvError;
 
 pub async fn ws_handler(
@@ -34,7 +34,7 @@ async fn connection_task(mut socket: WebSocket, room: RoomHandle) {
         }
     };
 
-    let join = match room.join(hello).await {
+    let outcome = match room.join(hello).await {
         Ok(j) => j,
         Err(JoinError::RoomFull) => {
             let _ = send_bye(&mut socket, ByeReason::RoomFull).await;
@@ -46,7 +46,18 @@ async fn connection_task(mut socket: WebSocket, room: RoomHandle) {
         }
     };
 
-    let pastel_room::JoinResult {
+    let join = match outcome {
+        JoinOutcome::Joined(j) => j,
+        JoinOutcome::Pending {
+            candidate,
+            approval_rx,
+        } => match await_approval(&mut socket, &room, candidate, approval_rx).await {
+            Some(j) => j,
+            None => return,
+        },
+    };
+
+    let JoinResult {
         you,
         mut unicast_rx,
         mut broadcast_rx,
@@ -103,6 +114,48 @@ async fn connection_task(mut socket: WebSocket, room: RoomHandle) {
     }
 
     room.leave(you).await;
+}
+
+async fn await_approval(
+    socket: &mut WebSocket,
+    room: &RoomHandle,
+    candidate: pastel_proto::PlayerId,
+    mut approval_rx: tokio::sync::oneshot::Receiver<ApprovalResult>,
+) -> Option<JoinResult> {
+    if send_msg(socket, &ServerMsg::JoinPending).await.is_err() {
+        room.cancel_pending(candidate).await;
+        return None;
+    }
+    loop {
+        tokio::select! {
+            biased;
+            res = &mut approval_rx => match res {
+                Ok(ApprovalResult::Approved(j)) => return Some(j),
+                Ok(ApprovalResult::Rejected) => {
+                    let _ = send_bye(socket, ByeReason::Kicked).await;
+                    return None;
+                }
+                Err(_) => {
+                    // Room dropped before deciding.
+                    let _ = send_bye(socket, ByeReason::RoomClosed).await;
+                    return None;
+                }
+            },
+            ws_msg = socket.recv() => match ws_msg {
+                Some(Ok(Message::Close(_))) | None => {
+                    room.cancel_pending(candidate).await;
+                    return None;
+                }
+                Some(Err(_)) => {
+                    room.cancel_pending(candidate).await;
+                    return None;
+                }
+                Some(Ok(_)) => {
+                    // While pending we accept no client frames; ignore.
+                }
+            },
+        }
+    }
 }
 
 async fn recv_hello(socket: &mut WebSocket) -> anyhow::Result<Hello> {

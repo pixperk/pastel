@@ -45,6 +45,9 @@ pub fn validate_client(msg: &ClientMsg) -> Result<(), CodecError> {
     match msg {
         ClientMsg::Hello(h) => {
             check_len("hello.name", h.name.len(), MAX_NAME_LEN)?;
+            if let Some(t) = &h.client_token {
+                check_len("hello.client_token", t.len(), MAX_CLIENT_TOKEN_LEN)?;
+            }
         }
         ClientMsg::Stroke { points, .. } => {
             check_len("stroke.points", points.len(), MAX_POINTS_PER_BATCH)?;
@@ -133,6 +136,10 @@ pub fn validate_server(msg: &ServerMsg, depth: u8) -> Result<(), CodecError> {
             crate::msg::GameEvent::HintReveal { mask } => {
                 check_len("hint_reveal.mask", mask.len(), MAX_WORD_LEN)?;
             }
+            crate::msg::GameEvent::JoinRequest { name, .. } => {
+                check_len("join_request.name", name.len(), MAX_NAME_LEN)?;
+            }
+            crate::msg::GameEvent::JoinCanceled { .. } => {}
         },
         ServerMsg::WordOptions { words, .. } => {
             check_len("word_options.words", words.len(), MAX_WORD_OPTIONS)?;
@@ -143,7 +150,10 @@ pub fn validate_server(msg: &ServerMsg, depth: u8) -> Result<(), CodecError> {
         ServerMsg::DrawerWord { word, .. } => {
             check_len("drawer_word.word", word.len(), MAX_WORD_LEN)?;
         }
-        ServerMsg::Guess { .. } | ServerMsg::Ping { .. } | ServerMsg::Bye { .. } => {}
+        ServerMsg::JoinPending
+        | ServerMsg::Guess { .. }
+        | ServerMsg::Ping { .. }
+        | ServerMsg::Bye { .. } => {}
     }
     Ok(())
 }

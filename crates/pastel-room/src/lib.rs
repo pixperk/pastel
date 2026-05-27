@@ -10,7 +10,9 @@ pub mod game;
 mod room;
 pub mod words;
 
-pub use room::{spawn_room, JoinError, JoinResult, RoomCmd, RoomHandle};
+pub use room::{
+    spawn_room, ApprovalResult, JoinError, JoinOutcome, JoinResult, RoomCmd, RoomHandle,
+};
 pub use words::{Difficulty, SharedWords, WordLists};
 
 pub const BROADCAST_CAPACITY: usize = 1024;

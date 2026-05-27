@@ -6,7 +6,7 @@
 //! windows pass instantly via `advance`.
 
 use pastel_proto::*;
-use pastel_room::{spawn_room, JoinResult, RoomHandle, WordLists};
+use pastel_room::{spawn_room, JoinOutcome, JoinResult, RoomHandle, WordLists};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver as BroadcastRx;
@@ -37,11 +37,15 @@ fn hello(name: &str) -> Hello {
         room: code(),
         name: name.into(),
         resume_from: None,
+        client_token: None,
     }
 }
 
 async fn join(h: &RoomHandle, name: &str) -> JoinResult {
-    h.join(hello(name)).await.unwrap()
+    match h.join(hello(name)).await.unwrap() {
+        JoinOutcome::Joined(j) => j,
+        JoinOutcome::Pending { .. } => panic!("unexpected pending join in test helper"),
+    }
 }
 
 async fn next_broadcast(

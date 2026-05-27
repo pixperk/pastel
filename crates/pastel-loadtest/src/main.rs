@@ -278,6 +278,7 @@ async fn run_client(
         room,
         name,
         resume_from: None,
+        client_token: None,
     });
     if sink
         .send(Message::Binary(encode(&hello).unwrap()))
