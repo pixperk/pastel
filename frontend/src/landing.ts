@@ -20,41 +20,45 @@ export function showLanding(): void {
   const storedMode =
     (window.localStorage.getItem(STORAGE_MODE) as GameMode | null) ?? "Standard";
 
+  const MODE_ACCENTS = ["#f2a4b0", "#8ecac4", "#e8c96e"];
+  const MODE_SHADOWS = ["#e08a96", "#6bb0aa", "#d0b254"];
+
   document.body.innerHTML = `
     <main class="landing">
-      <section class="landing-card">
-        <h1>pastel</h1>
-        <p class="landing-tag">Draw with friends. No accounts.</p>
+      <div class="landing-inner">
+        <h1 class="logo"><span class="logo-text landing-logo">pastel</span></h1>
+        <p class="landing-tag">draw. guess. laugh.</p>
 
         <form class="landing-form" id="landingForm">
-          <fieldset class="modes">
-            <legend>Mode</legend>
+          <div class="mode-grid-landing">
             ${MODE_OPTIONS.map(
-              (m) => `
-              <label class="mode-pick ${m.id === storedMode ? "mode-pick--on" : ""}">
+              (m, i) => `
+              <label class="mode-tile ${m.id === storedMode ? "mode-tile--on" : ""}"
+                     style="--tile-accent: ${MODE_ACCENTS[i]}; --tile-shadow: ${MODE_SHADOWS[i]};">
                 <input type="radio" name="mode" value="${m.id}"
                        ${m.id === storedMode ? "checked" : ""} />
-                <span class="mode-pick-label">${m.label}</span>
-                <span class="mode-pick-meta">${m.rounds} rounds · ${m.wordChoices} words</span>
+                <span class="mode-tile-label">${m.label}</span>
+                <span class="mode-tile-desc">${m.desc}</span>
+                <span class="mode-tile-meta">${m.rounds} rounds</span>
               </label>`,
             ).join("")}
-          </fieldset>
+          </div>
 
-          <button type="submit" class="landing-primary">Create new room</button>
+          <button type="submit" class="landing-cta">Start a room</button>
         </form>
 
-        <div class="landing-divider"><span>or</span></div>
+        <div class="landing-divider"><span>or join a friend</span></div>
 
         <form class="landing-join" id="landingJoin">
-          <label class="field">
-            <span class="field-label">Join with a code</span>
+          <div class="landing-join-row">
             <input id="landingCode" type="text" maxlength="6" minlength="6"
                    required pattern="[A-Za-z0-9]{6}" autocomplete="off"
-                   placeholder="ABC234" style="text-transform: uppercase" />
-          </label>
-          <button type="submit" class="landing-secondary">Join</button>
+                   placeholder="Room code" class="landing-code-input"
+                   style="text-transform: uppercase" />
+            <button type="submit" class="landing-join-btn">Jump in</button>
+          </div>
         </form>
-      </section>
+      </div>
     </main>
   `;
 
@@ -62,13 +66,12 @@ export function showLanding(): void {
   const createForm = document.getElementById("landingForm") as HTMLFormElement;
   const joinForm = document.getElementById("landingJoin") as HTMLFormElement;
 
-  // Toggle the "selected" class on mode pills as the radio changes.
-  for (const pill of document.querySelectorAll<HTMLLabelElement>(".mode-pick")) {
-    pill.addEventListener("click", () => {
-      for (const p of document.querySelectorAll<HTMLLabelElement>(".mode-pick")) {
-        p.classList.remove("mode-pick--on");
+  for (const tile of document.querySelectorAll<HTMLLabelElement>(".mode-tile")) {
+    tile.addEventListener("click", () => {
+      for (const t of document.querySelectorAll<HTMLLabelElement>(".mode-tile")) {
+        t.classList.remove("mode-tile--on");
       }
-      pill.classList.add("mode-pick--on");
+      tile.classList.add("mode-tile--on");
     });
   }
 
