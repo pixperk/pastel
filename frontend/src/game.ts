@@ -4,7 +4,7 @@
 import type { GameMode } from "./proto";
 
 export type GamePhase =
-  | { kind: "Lobby" }
+  | { kind: "Lobby"; deadline?: number }
   | {
       kind: "ChoosingWord";
       drawer: number;

@@ -41,7 +41,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
     root.classList.add("game-overlay--visible");
   }
 
-  function renderLobby(ctx: RenderContext): void {
+  function renderLobby(phase: Extract<GamePhase, { kind: "Lobby" }>, ctx: RenderContext): void {
     visible();
     const isHost = ctx.you !== null && ctx.you === ctx.host;
     const canStart = isHost && ctx.playerCount >= 2;
@@ -65,12 +65,20 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
          }`
       : `<p class="lobby-waiting"><strong>${escapeHtml(hostName)}</strong> will kick things off soon</p>`;
 
+    const timerSection = phase.deadline !== undefined
+      ? `<div class="lobby-timer" data-deadline="${phase.deadline}">
+           <span class="lobby-timer-label">Room expires in</span>
+           <span class="lobby-timer-value" id="lobbyTimerValue">--</span>
+         </div>`
+      : "";
+
     root.innerHTML = `
       <div class="overlay-card overlay-card--lobby">
         <div class="lobby-head">
           <h2>Waiting room</h2>
           <span class="lobby-mode-badge">${escapeHtml(ctx.modeBadge)}</span>
         </div>
+        ${timerSection}
         <div class="lobby-players">${avatarChips}</div>
         <div class="lobby-actions">
           ${startSection}
@@ -98,6 +106,25 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
       });
     }
     wireInvite(ctx);
+
+    // Lobby expiry countdown: ticks down the visible text every rAF, stops
+    // when the deadline passes or the lobby DOM is replaced by a new render.
+    if (phase.deadline !== undefined) {
+      const valueEl = root.querySelector<HTMLElement>("#lobbyTimerValue");
+      const timerEl = root.querySelector<HTMLElement>(".lobby-timer");
+      const deadline = phase.deadline;
+      function tickLobby(): void {
+        if (!valueEl || !document.contains(valueEl)) return;
+        const ms = Math.max(0, deadline - performance.now());
+        const secs = Math.ceil(ms / 1000);
+        const mm = Math.floor(secs / 60);
+        const ss = String(secs % 60).padStart(2, "0");
+        valueEl.textContent = `${mm}:${ss}`;
+        if (timerEl) timerEl.classList.toggle("lobby-timer--low", secs <= 15);
+        if (ms > 0) requestAnimationFrame(tickLobby);
+      }
+      requestAnimationFrame(tickLobby);
+    }
   }
 
   function wireInvite(ctx: RenderContext): void {
@@ -236,7 +263,7 @@ export function mountGameUI(root: HTMLElement, handlers: GameUIHandlers): GameUI
   function render(phase: GamePhase, ctx: RenderContext): void {
     switch (phase.kind) {
       case "Lobby":
-        renderLobby(ctx);
+        renderLobby(phase, ctx);
         break;
       case "ChoosingWord":
         renderChoosing(phase, ctx);
