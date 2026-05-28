@@ -10,6 +10,10 @@ Rust on the back. TypeScript on the front. Binary WebSockets between.
 
 </div>
 
+
+https://github.com/user-attachments/assets/5d0c977b-6995-44a9-b730-a60cd85d396d
+
+
 <p align="center">
   <img alt="pastel architecture" src="assets/architecture.png" width="900" />
 </p>
