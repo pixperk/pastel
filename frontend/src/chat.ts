@@ -81,9 +81,16 @@ export function mountChat(root: HTMLElement, handlers: ChatHandlers): ChatPanel 
     const wasAtBottom = stickToBottom;
     scroll.appendChild(node);
     if (wasAtBottom) {
-      // double-RAF so the newly inserted layout commits before we scroll.
+      // Scroll immediately so a typical text row sticks, then again on the
+      // next two animation frames so async-rendered content (avatar SVGs,
+      // emoji fonts, anything that grows the row after first layout) still
+      // pins the bottom rather than leaving the new message half-off-screen.
+      scroll.scrollTop = scroll.scrollHeight;
       requestAnimationFrame(() => {
         scroll.scrollTop = scroll.scrollHeight;
+        requestAnimationFrame(() => {
+          scroll.scrollTop = scroll.scrollHeight;
+        });
       });
     }
   }
