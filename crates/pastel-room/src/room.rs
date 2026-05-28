@@ -20,6 +20,11 @@ const CHAT_REFILL_PER_SEC: f32 = 5.0 / 3.0;
 const GUESS_BUCKET_CAPACITY: f32 = 10.0;
 const GUESS_REFILL_PER_SEC: f32 = 10.0 / 3.0;
 
+/// How long a freshly-created room sits in Lobby before being torn down
+/// if nobody hits Start. Releases the room code so someone else can claim
+/// it instead of letting it squat indefinitely.
+const LOBBY_TIMEOUT: Duration = Duration::from_secs(120);
+
 pub enum RoomCmd {
     Join {
         hello: Hello,
@@ -124,9 +129,32 @@ impl RoomHandle {
 }
 
 pub fn spawn_room(code: RoomCode, words: SharedWords) -> RoomHandle {
+    spawn_room_inner(code, words, None)
+}
+
+/// Spawn a room with a registry-eviction callback. The callback fires once
+/// when the room shuts down (lobby timeout or last-human leaves), letting
+/// the caller drop the entry so the code becomes reusable.
+pub fn spawn_room_with_evictor<F: FnOnce() + Send + 'static>(
+    code: RoomCode,
+    words: SharedWords,
+    on_close: F,
+) -> RoomHandle {
+    spawn_room_inner(code, words, Some(Box::new(on_close)))
+}
+
+fn spawn_room_inner(
+    code: RoomCode,
+    words: SharedWords,
+    on_close: Option<Box<dyn FnOnce() + Send>>,
+) -> RoomHandle {
     let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_INBOX_CAPACITY);
     let (bc_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-    let room = Room::new(code, bc_tx, words);
+    let mut room = Room::new(code, bc_tx, words);
+    room.on_close = on_close;
+    // First-human deadline ticks from spawn; if nobody starts within
+    // LOBBY_TIMEOUT the room shuts itself down.
+    room.game.lobby_deadline = Some(Instant::now() + LOBBY_TIMEOUT);
     tokio::spawn(room.run(cmd_rx));
     RoomHandle { cmd_tx }
 }
@@ -202,6 +230,10 @@ struct GameState {
     /// A "round" advances when every alive player has drawn once.
     turn_in_round: u8,
     host: Option<PlayerId>,
+    /// Wall-clock deadline by which the host must hit Start. If we're still
+    /// in `Lobby` when this elapses, the room expires and frees its code.
+    /// Cleared once a game actually starts (no expiry mid-game).
+    lobby_deadline: Option<Instant>,
 }
 
 impl Default for GameState {
@@ -214,6 +246,7 @@ impl Default for GameState {
             phase: GamePhase::Lobby,
             turn_in_round: 0,
             host: None,
+            lobby_deadline: None,
         }
     }
 }
@@ -248,6 +281,14 @@ struct Room {
     /// so accumulated scores, rotation slot, and scoreboard row carry over
     /// from before the disconnect.
     departed: AHashMap<String, PlayerId>,
+    /// Called once when the room shuts down (lobby timeout or last human
+    /// leaves). The `Rooms` registry uses this to evict the entry so the
+    /// room code becomes available again.
+    on_close: Option<Box<dyn FnOnce() + Send>>,
+    /// Set during command/deadline handling when the room has decided to
+    /// shut down. The run loop checks this after each step and finalizes
+    /// (sends Bye to all, calls on_close, breaks).
+    closing: bool,
 }
 
 impl Room {
@@ -270,11 +311,17 @@ impl Room {
             kicked_tokens: HashSet::new(),
             pending: AHashMap::new(),
             departed: AHashMap::new(),
+            on_close: None,
+            closing: false,
         }
     }
 
     async fn run(mut self, mut inbox: mpsc::Receiver<RoomCmd>) {
         loop {
+            if self.closing {
+                self.finalize_close();
+                break;
+            }
             let next = self.next_deadline();
             tokio::select! {
                 biased;
@@ -286,6 +333,20 @@ impl Room {
                     self.handle_deadline();
                 }
             }
+        }
+    }
+
+    /// Send Bye to every connected slot (humans break their WS, bots break
+    /// their in-process tasks), then run the eviction callback. Idempotent.
+    fn finalize_close(&mut self) {
+        let bye = Arc::new(ServerMsg::Bye {
+            reason: ByeReason::RoomClosed,
+        });
+        for slot in self.players.values() {
+            let _ = slot.unicast_tx.try_send(bye.clone());
+        }
+        if let Some(cb) = self.on_close.take() {
+            cb();
         }
     }
 
@@ -351,7 +412,9 @@ impl Room {
                 .as_millis() as u32
         };
         let phase = match &self.game.phase {
-            GamePhase::Lobby => GamePhaseSnapshot::Lobby,
+            GamePhase::Lobby => GamePhaseSnapshot::Lobby {
+                deadline_ms: self.game.lobby_deadline.map(&remaining_ms),
+            },
             GamePhase::ChoosingWord {
                 drawer,
                 deadline,
@@ -629,6 +692,15 @@ impl Room {
             self.end_game();
         } else if was_current_drawer {
             self.end_round_abort();
+        }
+
+        // If the only players left are bots, there's nothing to host. Shut
+        // the room down so the bots disconnect cleanly and the code can be
+        // reused by someone else.
+        let humans_left = self.players.values().filter(|s| !s.is_bot).count();
+        if humans_left == 0 {
+            tracing::info!(room = %self.code, "no humans left; closing room");
+            self.closing = true;
         }
     }
 
@@ -1003,6 +1075,8 @@ impl Room {
             phase: GamePhase::Lobby, // will be overwritten by start_choosing_round
             turn_in_round: 0,
             host,
+            // Game is starting; the lobby-expire timer no longer applies.
+            lobby_deadline: None,
         };
         self.start_choosing_round(0);
     }
@@ -1337,12 +1411,25 @@ impl Room {
                     _ => Some(*deadline),
                 }
             }
-            GamePhase::Lobby | GamePhase::GameOver => None,
+            GamePhase::Lobby => self.game.lobby_deadline,
+            GamePhase::GameOver => None,
         }
     }
 
     fn handle_deadline(&mut self) {
         let now = Instant::now();
+        // Lobby timeout: nobody hit Start in time, expire the room so the
+        // code can be reused. Returns before other phase matches so we
+        // don't accidentally also try to auto-pick a word, etc.
+        if matches!(self.game.phase, GamePhase::Lobby) {
+            if let Some(d) = self.game.lobby_deadline {
+                if now >= d {
+                    tracing::info!(room = %self.code, "lobby timeout; closing room");
+                    self.closing = true;
+                    return;
+                }
+            }
+        }
         let action = match &self.game.phase {
             GamePhase::ChoosingWord { deadline, .. } if now >= *deadline => {
                 DeadlineAction::AutoPickWord

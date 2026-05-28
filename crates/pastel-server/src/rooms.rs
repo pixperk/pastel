@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 use pastel_proto::RoomCode;
-use pastel_room::{spawn_room, RoomHandle, WordLists};
+use pastel_room::{spawn_room_with_evictor, RoomHandle, WordLists};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -19,9 +19,16 @@ impl Rooms {
 
     pub fn get_or_create(&self, code: RoomCode) -> RoomHandle {
         let words = self.words.clone();
+        let map = self.inner.clone();
         self.inner
             .entry(code)
-            .or_insert_with(|| spawn_room(code, words))
+            .or_insert_with(|| {
+                spawn_room_with_evictor(code, words, move || {
+                    // Room signalled shutdown (lobby timeout or last human
+                    // left). Drop the entry so the code is free for reuse.
+                    map.remove(&code);
+                })
+            })
             .clone()
     }
 

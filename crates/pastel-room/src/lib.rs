@@ -11,7 +11,8 @@ mod room;
 pub mod words;
 
 pub use room::{
-    spawn_room, ApprovalResult, JoinError, JoinOutcome, JoinResult, RoomCmd, RoomHandle,
+    spawn_room, spawn_room_with_evictor, ApprovalResult, JoinError, JoinOutcome, JoinResult,
+    RoomCmd, RoomHandle,
 };
 pub use words::{Difficulty, SharedWords, WordLists};
 

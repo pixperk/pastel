@@ -511,9 +511,15 @@ async fn round_end_excludes_departed_players() {
 #[tokio::test]
 async fn rejoin_with_same_client_token_restores_player_id() {
     let h = spawn();
+    // Keep a second human in the room so it doesn't shut down the moment
+    // alice leaves -- the bots-only-kill rule would otherwise wipe the
+    // departed map alice's rejoin needs to consult.
+    let mut keepalive = join_with_token(&h, "keepalive", "tok-keep").await;
     let mut alice = join_with_token(&h, "alice", "tok-alice").await;
     let original_id = alice.you;
+    let _ = next_unicast(&mut keepalive.unicast_rx).await;
     let _ = next_unicast(&mut alice.unicast_rx).await;
+    drain_presence(&mut keepalive.broadcast_rx, 2).await;
     drain_presence(&mut alice.broadcast_rx, 1).await;
 
     // Disconnect.
@@ -613,9 +619,13 @@ async fn host_leaving_skips_bots_for_transfer() {
 #[tokio::test]
 async fn rejoin_without_token_gets_fresh_player_id() {
     let h = spawn();
+    // Keep a stayer in the room so it survives alice's leave.
+    let mut keepalive = join_with_token(&h, "keepalive", "tok-keep").await;
     let mut alice = join_with_token(&h, "alice", "tok-alice").await;
     let original_id = alice.you;
+    let _ = next_unicast(&mut keepalive.unicast_rx).await;
     let _ = next_unicast(&mut alice.unicast_rx).await;
+    drain_presence(&mut keepalive.broadcast_rx, 2).await;
     drain_presence(&mut alice.broadcast_rx, 1).await;
 
     h.leave(alice.you).await;
@@ -624,5 +634,129 @@ async fn rejoin_without_token_gets_fresh_player_id() {
     assert_ne!(
         bob.you, original_id,
         "different token should get a different PlayerId"
+    );
+}
+
+// ---- room lifecycle: lobby timeout + bots-only kill ---------------------
+
+/// Once the last human leaves, the room shuts itself down: every remaining
+/// bot gets a Bye(RoomClosed) on its unicast and the room actor exits.
+#[tokio::test(start_paused = true)]
+async fn room_closes_when_last_human_leaves() {
+    let h = spawn();
+    let mut alice = join(&h, "alice").await;
+    let mut bot = match h.join_as_bot(hello("BotBob")).await.unwrap() {
+        JoinOutcome::Joined(j) => j,
+        JoinOutcome::Pending { .. } => panic!("unexpected pending"),
+    };
+    let _ = next_unicast(&mut alice.unicast_rx).await; // welcome
+    let _ = next_unicast(&mut bot.unicast_rx).await; // welcome
+    drain_presence(&mut alice.broadcast_rx, 2).await;
+    drain_presence(&mut bot.broadcast_rx, 1).await;
+
+    // Alice leaves. Only the bot remains, so the room should close and the
+    // bot's unicast should receive Bye(RoomClosed) shortly after.
+    h.leave(alice.you).await;
+
+    let bye = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match bot.unicast_rx.recv().await {
+                Some(m) => match m.as_ref() {
+                    ServerMsg::Bye { reason } => return Some(*reason),
+                    _ => continue,
+                },
+                None => return None,
+            }
+        }
+    })
+    .await
+    .unwrap_or(None);
+    assert_eq!(
+        bye,
+        Some(ByeReason::RoomClosed),
+        "bot should receive Bye(RoomClosed) after the last human leaves"
+    );
+}
+
+/// If nobody starts the game within the 120s lobby window, the room
+/// shuts down and the host's unicast receives Bye(RoomClosed).
+#[tokio::test(start_paused = true)]
+async fn lobby_times_out_after_120s_with_no_start() {
+    let h = spawn();
+    let mut alice = join(&h, "alice").await;
+    let _ = next_unicast(&mut alice.unicast_rx).await;
+    drain_presence(&mut alice.broadcast_rx, 1).await;
+
+    // Advance well past the 120s lobby window without sending Start.
+    tokio::time::advance(Duration::from_secs(125)).await;
+
+    let bye = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match alice.unicast_rx.recv().await {
+                Some(m) => match m.as_ref() {
+                    ServerMsg::Bye { reason } => return Some(*reason),
+                    _ => continue,
+                },
+                None => return None,
+            }
+        }
+    })
+    .await
+    .unwrap_or(None);
+    assert_eq!(
+        bye,
+        Some(ByeReason::RoomClosed),
+        "lobby past 120s without Start should expire and send Bye"
+    );
+}
+
+/// Sending Start before the deadline should cancel the lobby expiry; the
+/// room must NOT close just because 120s passed afterwards (because by then
+/// we're in the middle of a game).
+#[tokio::test(start_paused = true)]
+async fn start_within_lobby_window_cancels_expiry() {
+    let h = spawn();
+    let mut alice = join(&h, "alice").await;
+    let mut bob = join(&h, "bob").await;
+    let _ = next_unicast(&mut alice.unicast_rx).await;
+    let _ = next_unicast(&mut bob.unicast_rx).await;
+    drain_presence(&mut alice.broadcast_rx, 2).await;
+    drain_presence(&mut bob.broadcast_rx, 1).await;
+
+    // 30s into the lobby window, host hits Start.
+    tokio::time::advance(Duration::from_secs(30)).await;
+    h.send(
+        alice.you,
+        ClientMsg::Game(GameAction::Start {
+            mode: GameMode::Sprint,
+        }),
+    )
+    .await;
+
+    // Drain whatever the start emits so we don't trip a full mpsc buffer.
+    // Then advance past what would have been the lobby deadline; the room
+    // is in a game now, so no Bye should arrive on alice's unicast.
+    let _ = tokio::time::timeout(Duration::from_millis(50), alice.unicast_rx.recv()).await;
+    tokio::time::advance(Duration::from_secs(120)).await;
+
+    // Drain non-Bye unicasts inside a short window; assert none of them is
+    // a Bye(RoomClosed). The full game keeps producing word options etc.
+    let saw_bye = tokio::time::timeout(Duration::from_millis(150), async {
+        loop {
+            match alice.unicast_rx.recv().await {
+                Some(m) => {
+                    if matches!(m.as_ref(), ServerMsg::Bye { .. }) {
+                        return true;
+                    }
+                }
+                None => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        !saw_bye,
+        "starting the game must cancel the lobby expiry; got an unexpected Bye"
     );
 }
