@@ -16,7 +16,6 @@ let bgBass: Tone.Synth | null = null;
 let bgHat: Tone.NoiseSynth | null = null;
 let bgBell: Tone.Synth | null = null;
 let bgKick: Tone.MembraneSynth | null = null;
-let bgVinyl: Tone.Noise | null = null;
 
 // Jazz-flavored chord progression (Cmaj9 -> Am11 -> Dm9 -> G13).
 // Each entry: pad voicing (mid-high) + bass root for that bar.
@@ -85,12 +84,6 @@ function ensureStarted(): void {
     envelope: { attack: 0.005, decay: 0.05, sustain: 0, release: 0.05 },
     volume: -32,
   }).connect(warmth);
-
-  // Vinyl crackle: pink noise behind everything, very quiet, no envelope.
-  bgVinyl = new Tone.Noise({ type: "pink", volume: -36 });
-  const crackleFilter = new Tone.Filter(900, "highpass").toDestination();
-  bgVinyl.connect(crackleFilter);
-  bgVinyl.start();
 
   // One bar = 4 beats. Progression = 4 bars then loops.
   let bar = 0;
