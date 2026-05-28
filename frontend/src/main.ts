@@ -15,10 +15,12 @@ import {
   playJoin,
   playRoundEnd,
   playRoundStart,
+  setVoiceDucking,
   toggleBg,
   toggleSfx,
 } from "./music";
 import { showRoundIntro } from "./roundIntro";
+import type { MicState } from "./voice";
 import { mountChat, type ChatPanel } from "./chat";
 import { showConfirm } from "./dialog";
 import { showToast } from "./toast";
@@ -95,9 +97,47 @@ const bannerEl = document.getElementById("banner") as HTMLElement;
 const overlayEl = document.getElementById("gameOverlay") as HTMLElement;
 
 const room = pickRoomCode();
+const voiceRequested = new URLSearchParams(window.location.search).get("voice") === "1";
+
+// Kick off the LiveKit chunk download in parallel with the avatar picker.
+// By the time the user finishes picking, the 500KB SDK is cached and the
+// post-picker connect only pays the WS handshake (~100-300ms).
+const voicePrefetch: Promise<typeof import("./voice")> | null = voiceRequested
+  ? import("./voice")
+  : null;
+
 const { name, avatar } = await pickNameAndAvatar();
 const clientToken = pickClientToken();
 document.title = `pastel -- room ${room}`;
+
+if (voiceRequested && voicePrefetch) {
+  await prewarmVoice(room, name, voicePrefetch);
+}
+
+async function prewarmVoice(
+  roomCode: string,
+  displayName: string,
+  modulePromise: Promise<typeof import("./voice")>,
+): Promise<void> {
+  const overlay = document.createElement("div");
+  overlay.className = "voice-prewarm";
+  overlay.innerHTML = `
+    <div class="voice-prewarm-card">
+      <div class="voice-prewarm-spin"><i class="ph ph-microphone"></i></div>
+      <div class="voice-prewarm-title">Setting up voice...</div>
+      <div class="voice-prewarm-sub">grabbing the line</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  try {
+    const v = await modulePromise;
+    await v.connectVoice(roomCode, displayName);
+  } catch (e) {
+    console.warn("[voice] prewarm failed", e);
+  } finally {
+    overlay.remove();
+  }
+}
 
 // Mode for the next game start. Seeded from the URL (?mode=...) which the
 // landing page sets for the host. Falls back to Standard for joiners and
@@ -156,6 +196,8 @@ let pendingWordOptions: string[] | null = null;
 let pendingDrawerWord: string | null = null;
 const prevScores = new Map<number, number>();
 const correctGuessers = new Set<number>();
+const speakingNames = new Set<string>();
+const mutedSpeakerNames = new Set<string>();
 
 function nameOf(id: number, fallback = "anon"): string {
   return players.get(id)?.name ?? nameHistory.get(id) ?? fallback;
@@ -196,8 +238,13 @@ function renderPlayers(): void {
     const guessedTag = correctGuessers.has(p.id)
       ? '<span class="players-guessed" title="Guessed correctly">✓</span>'
       : "";
+    const muteBtn =
+      voiceRequested && p.id !== youId
+        ? `<button class="players-mute${mutedSpeakerNames.has(p.name) ? " players-mute--on" : ""}" data-target-name="${escapeHtml(p.name)}" title="${mutedSpeakerNames.has(p.name) ? `Unmute ${escapeHtml(p.name)}` : `Mute ${escapeHtml(p.name)}`}" aria-label="Toggle mute for ${escapeHtml(p.name)}"><i class="${mutedSpeakerNames.has(p.name) ? "ph-fill ph-speaker-slash" : "ph ph-speaker-high"}" aria-hidden="true"></i></button>`
+        : "";
     const correctClass = correctGuessers.has(p.id) ? " players-li--correct" : "";
-    return `<li class="${correctClass}">
+    const speakingClass = speakingNames.has(p.name) ? " players-li--speaking" : "";
+    return `<li class="${correctClass}${speakingClass}" data-player-name="${escapeHtml(p.name)}">
       ${rankTag}
       <span class="players-avatar-wrap">
         <span class="players-avatar">${renderAvatar(p.avatar)}</span>
@@ -206,7 +253,7 @@ function renderPlayers(): void {
       <div class="players-info">
         <span class="players-name">${escapeHtml(p.name)}</span>
         <span class="players-meta">
-          ${youTag}${hostTag}${guessedTag}${scoreTag}
+          ${youTag}${hostTag}${guessedTag}${scoreTag}${muteBtn}
         </span>
       </div>
     </li>`;
@@ -259,6 +306,17 @@ function renderPlayers(): void {
     ?.addEventListener("click", () => {
       void copyInviteLink();
     });
+  for (const btn of playersEl.querySelectorAll<HTMLButtonElement>(".players-mute")) {
+    btn.addEventListener("click", async () => {
+      const target = btn.dataset.targetName ?? "";
+      if (!target) return;
+      const v = await loadVoice();
+      const nowMuted = v.toggleRemoteMute(target);
+      if (nowMuted) mutedSpeakerNames.add(target);
+      else mutedSpeakerNames.delete(target);
+      renderPlayers();
+    });
+  }
   for (const btn of playersEl.querySelectorAll<HTMLButtonElement>(
     ".pending-approve",
   )) {
@@ -364,6 +422,60 @@ if (loadBgPreference() || loadSfxPreference()) {
   document.addEventListener("click", armOnFirstClick, { once: true });
 }
 refreshAudioBtns();
+
+// Voice chat (LiveKit). Mic starts off; first click connects + publishes muted,
+// second click goes live. Active speakers drive a pulse on player avatars.
+const micBtn = document.getElementById("micToggle") as HTMLButtonElement | null;
+
+function refreshMicBtn(state: MicState): void {
+  if (!micBtn) return;
+  micBtn.classList.toggle("canvas-setting--on", state === "live");
+  micBtn.classList.toggle("canvas-setting--busy", state === "connecting");
+  const icon = micBtn.querySelector("i");
+  if (icon) {
+    if (state === "live") icon.className = "ph-fill ph-microphone";
+    else if (state === "muted") icon.className = "ph ph-microphone";
+    else if (state === "connecting") icon.className = "ph ph-circle-notch";
+    else icon.className = "ph ph-microphone-slash";
+  }
+}
+
+function applySpeakingClasses(): void {
+  for (const li of playersEl.querySelectorAll<HTMLLIElement>("li[data-player-name]")) {
+    const n = li.dataset.playerName ?? "";
+    li.classList.toggle("players-li--speaking", speakingNames.has(n));
+  }
+}
+
+// LiveKit SDK is ~500KB; lazy-load on first mic tap so non-voice users don't pay.
+// If the room was created with ?voice=1 it's already pre-imported and warmed.
+let voiceModule: typeof import("./voice") | null = null;
+async function loadVoice(): Promise<typeof import("./voice")> {
+  if (voiceModule) return voiceModule;
+  voiceModule = await import("./voice");
+  voiceModule.onMicState((s) => {
+    refreshMicBtn(s);
+    setVoiceDucking(s === "live");
+  });
+  voiceModule.onActiveSpeakers((ids) => {
+    speakingNames.clear();
+    for (const id of ids) speakingNames.add(voiceModule!.identityToName(id));
+    applySpeakingClasses();
+  });
+  return voiceModule;
+}
+
+micBtn?.addEventListener("click", async () => {
+  const v = await loadVoice();
+  await v.toggleMic(room, name);
+});
+
+if (voiceRequested) {
+  // Module is already imported by prewarmVoice; this attaches the listeners.
+  void loadVoice();
+} else {
+  refreshMicBtn("off");
+}
 
 const wsUrl = (() => {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";

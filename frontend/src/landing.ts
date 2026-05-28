@@ -44,6 +44,18 @@ export function showLanding(): void {
             ).join("")}
           </div>
 
+          <label class="voice-opt" tabindex="0">
+            <input type="checkbox" id="landingVoice" />
+            <span class="voice-opt-card">
+              <span class="voice-opt-icon"><i class="ph-fill ph-microphone"></i></span>
+              <span class="voice-opt-body">
+                <span class="voice-opt-title">Voice chat</span>
+                <span class="voice-opt-sub">talk to your room while you draw</span>
+              </span>
+              <span class="voice-opt-switch"><span class="voice-opt-knob"></span></span>
+            </span>
+          </label>
+
           <button type="submit" class="landing-cta">Start a room</button>
         </form>
 
@@ -80,11 +92,13 @@ export function showLanding(): void {
     const mode =
       (new FormData(createForm).get("mode") as GameMode | null) ?? "Standard";
     window.localStorage.setItem(STORAGE_MODE, mode);
+    const voiceOn = (document.getElementById("landingVoice") as HTMLInputElement | null)?.checked;
     const code = randomCode();
     const url = new URL(window.location.href);
     url.searchParams.set("room", code);
     url.searchParams.set("mode", mode);
     url.searchParams.set("host", "1");
+    if (voiceOn) url.searchParams.set("voice", "1");
     window.location.href = url.toString();
   });
 

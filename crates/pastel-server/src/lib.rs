@@ -6,6 +6,7 @@
 
 pub mod bot;
 pub mod rooms;
+pub mod voice;
 pub mod words;
 pub mod ws;
 
@@ -38,6 +39,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/metrics", get(metrics))
         .route("/ws/:code", get(ws::ws_handler))
         .route("/bot/:code", post(bot::add_bot))
+        .route("/voice/token", get(voice::token))
         .with_state(state);
 
     // In production, serve the frontend dist/ folder as a static fallback.

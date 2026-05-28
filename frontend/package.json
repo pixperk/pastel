@@ -19,6 +19,7 @@
   "dependencies": {
     "@dicebear/collection": "^9.4.2",
     "@dicebear/core": "^9.4.2",
+    "livekit-client": "^2.19.0",
     "tone": "^15.1.22"
   }
 }

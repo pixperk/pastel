@@ -130,6 +130,21 @@ async function ensureToneStarted(): Promise<void> {
   toneStarted = true;
 }
 
+// Duck the master output when voice goes live so other players don't hear the
+// bg music bleed through your mic. Echo cancellation in WebRTC is tuned for
+// speech, not music, so even with EC on, a loud loop will leak. We fade the
+// destination volume down to almost nothing while voice is live, and back up
+// when the mic mutes/disconnects.
+let duckedForVoice = false;
+const DUCK_DB = -28;
+
+export function setVoiceDucking(active: boolean): void {
+  if (duckedForVoice === active) return;
+  duckedForVoice = active;
+  const target = active ? DUCK_DB : 0;
+  Tone.getDestination().volume.rampTo(target, 0.4);
+}
+
 export function isBgEnabled(): boolean {
   return bgEnabled;
 }
