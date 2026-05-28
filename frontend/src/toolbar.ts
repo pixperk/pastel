@@ -42,7 +42,18 @@ export function loadInitialColor(): number {
   return PALETTES[0].colors[0].rgb;
 }
 
+// Phones get a single fixed tool (pen) regardless of whatever was saved on
+// a previous desktop visit, since the alternate brushes/eraser are hidden
+// from the mobile UI to reduce toolbar height.
+function isPhoneViewport(): boolean {
+  return typeof window.matchMedia === "function"
+    && window.matchMedia("(max-width: 760px)").matches;
+}
+
 export function loadInitialTool(): Tool {
+  if (isPhoneViewport()) {
+    return findTool("pen")!;
+  }
   const stored = window.localStorage.getItem(STORAGE_TOOL);
   if (stored) {
     const t = findTool(stored);
