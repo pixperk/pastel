@@ -2432,6 +2432,36 @@ canvas {
   margin-top: 2px;
 }
 
+.landing-credits {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  opacity: 0.7;
+  font-family: var(--font-display);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.landing-credits a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dashed transparent;
+  transition: color 140ms, border-bottom-color 140ms;
+}
+
+.landing-credits a:hover {
+  color: var(--ink);
+  border-bottom-color: var(--line);
+}
+
+.landing-credits-dot {
+  opacity: 0.4;
+}
+
 .voice-prewarm {
   position: fixed;
   inset: 0;

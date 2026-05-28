@@ -3,6 +3,7 @@
 // Name + avatar are collected by the picker once the user lands in a room.
 
 import { MODE_OPTIONS } from "./game";
+import { setBgScene } from "./music";
 import { parseRoomCode, type GameMode } from "./proto";
 
 const STORAGE_MODE = "pastel.mode";
@@ -17,6 +18,8 @@ function randomCode(): string {
 }
 
 export function showLanding(): void {
+  void setBgScene("landing");
+
   const storedMode =
     (window.localStorage.getItem(STORAGE_MODE) as GameMode | null) ?? "Standard";
 
@@ -70,6 +73,15 @@ export function showLanding(): void {
             <button type="submit" class="landing-join-btn">Jump in</button>
           </div>
         </form>
+
+        <footer class="landing-credits">
+          <span>made with</span>
+          <a href="https://github.com/btahir/open-lofi" target="_blank" rel="noopener">open-lofi</a>
+          <span class="landing-credits-dot">.</span>
+          <a href="https://www.dicebear.com/styles/big-smile" target="_blank" rel="noopener">dicebear</a>
+          <span class="landing-credits-dot">.</span>
+          <a href="https://livekit.io" target="_blank" rel="noopener">livekit</a>
+        </footer>
       </div>
     </main>
   `;

@@ -1,127 +1,109 @@
-// Background lofi loop + event sound effects, all procedural via Tone.js.
-// No audio files bundled. Defaults to OFF; user toggles via header button.
-// State persisted in localStorage so the choice survives reloads.
+// Background music: streams real audio files from /music/ (cheap, no DSP).
+// Event SFX stay procedural via Tone.js (short, lightweight, no glitching).
+//
+// Three tracks switch by scene: landing / lobby / game. Track changes
+// crossfade so transitions don't feel abrupt.
 
 import * as Tone from "tone";
 
 const BG_KEY = "pastel.bg";
 const SFX_KEY = "pastel.sfx";
 
+export type BgScene = "landing" | "lobby" | "game";
+
+const TRACKS: Record<BgScene, string> = {
+  landing: "/music/landing.mp3",
+  lobby: "/music/lobby.mp3",
+  game: "/music/game.mp3",
+};
+
+const BG_VOLUME = 0.35;
+const FADE_MS = 600;
+const DUCK_VOLUME = 0.05;
+
 let bgEnabled = false;
 let sfxEnabled = false;
-let started = false;
 let toneStarted = false;
-let bgPad: Tone.PolySynth | null = null;
-let bgBass: Tone.Synth | null = null;
-let bgHat: Tone.NoiseSynth | null = null;
-let bgBell: Tone.Synth | null = null;
-let bgKick: Tone.MembraneSynth | null = null;
+let duckedForVoice = false;
+let currentScene: BgScene | null = null;
+let currentAudio: HTMLAudioElement | null = null;
+let fadeTimers = new Set<number>();
 
-// Jazz-flavored chord progression (Cmaj9 -> Am11 -> Dm9 -> G13).
-// Each entry: pad voicing (mid-high) + bass root for that bar.
-const PROGRESSION: { pad: string[]; bass: string }[] = [
-  { pad: ["E3", "G3", "B3", "D4"], bass: "C2" },
-  { pad: ["E3", "G3", "C4", "D4"], bass: "A1" },
-  { pad: ["F3", "A3", "C4", "E4"], bass: "D2" },
-  { pad: ["F3", "A3", "B3", "E4"], bass: "G1" },
-];
+function targetVolume(): number {
+  return duckedForVoice ? DUCK_VOLUME : BG_VOLUME;
+}
 
-// Sparse pentatonic melody phrases (one per chord). Notes + offsets in beats.
-const MELODY: { note: string; beat: number }[][] = [
-  [{ note: "E5", beat: 0.5 }, { note: "G5", beat: 1.5 }, { note: "D5", beat: 3 }],
-  [{ note: "C5", beat: 1 }, { note: "E5", beat: 2.5 }],
-  [{ note: "F5", beat: 0.5 }, { note: "A5", beat: 2 }, { note: "E5", beat: 3.5 }],
-  [{ note: "D5", beat: 1 }, { note: "G5", beat: 3 }],
-];
+function clearFades(): void {
+  for (const t of fadeTimers) window.clearInterval(t);
+  fadeTimers.clear();
+}
 
-function ensureStarted(): void {
-  if (started) return;
-  started = true;
-
-  // Master chain: lowpass + warm reverb so everything melts together.
-  const reverb = new Tone.Reverb({ decay: 5, wet: 0.35 }).toDestination();
-  const warmth = new Tone.Filter(2200, "lowpass").connect(reverb);
-
-  // Hazy pad. FMSynth gives a softer, foggier feel than plain sine.
-  bgPad = new Tone.PolySynth({
-    voice: Tone.FMSynth,
-    options: {
-      harmonicity: 1.5,
-      modulationIndex: 3,
-      oscillator: { type: "sine" },
-      envelope: { attack: 1.8, decay: 0.8, sustain: 0.7, release: 3.5 },
-      modulation: { type: "triangle" },
-      modulationEnvelope: { attack: 1.5, decay: 0.5, sustain: 0.4, release: 2.5 },
-    },
-  }).connect(warmth);
-  bgPad.volume.value = -18;
-
-  // Sub bass: round, low.
-  bgBass = new Tone.Synth({
-    oscillator: { type: "sine" },
-    envelope: { attack: 0.04, decay: 0.6, sustain: 0.4, release: 1.2 },
-    volume: -14,
-  }).connect(warmth);
-
-  // Soft bell for the sparse melody.
-  bgBell = new Tone.Synth({
-    oscillator: { type: "triangle" },
-    envelope: { attack: 0.01, decay: 0.6, sustain: 0.1, release: 0.8 },
-    volume: -20,
-  }).connect(warmth);
-
-  // Subtle kick on beat 1 of each bar.
-  bgKick = new Tone.MembraneSynth({
-    pitchDecay: 0.05,
-    octaves: 4,
-    envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.4 },
-    volume: -16,
-  }).connect(warmth);
-
-  // Filtered hi-hat ticks on off-beats.
-  bgHat = new Tone.NoiseSynth({
-    noise: { type: "pink" },
-    envelope: { attack: 0.005, decay: 0.05, sustain: 0, release: 0.05 },
-    volume: -32,
-  }).connect(warmth);
-
-  // One bar = 4 beats. Progression = 4 bars then loops.
-  let bar = 0;
-  new Tone.Loop((time) => {
-    const chord = PROGRESSION[bar % PROGRESSION.length];
-    // Pad sustains across the bar
-    bgPad?.triggerAttackRelease(chord.pad, "1n", time, 0.9);
-    // Bass on beat 1 and a softer hit on beat 3
-    bgBass?.triggerAttackRelease(chord.bass, "4n", time, 0.9);
-    bgBass?.triggerAttackRelease(
-      chord.bass,
-      "8n",
-      time + Tone.Time("2n").toSeconds(),
-      0.5,
-    );
-    // Kick on beat 1, lighter ghost on beat 3
-    bgKick?.triggerAttackRelease("C1", "8n", time, 0.8);
-    bgKick?.triggerAttackRelease("C1", "16n", time + Tone.Time("2n").toSeconds(), 0.3);
-    // Hats: off-beats with slight swing
-    const beat = Tone.Time("4n").toSeconds();
-    bgHat?.triggerAttackRelease("32n", time + beat * 0.5);
-    bgHat?.triggerAttackRelease("32n", time + beat * 1.5);
-    bgHat?.triggerAttackRelease("32n", time + beat * 2.5);
-    bgHat?.triggerAttackRelease("32n", time + beat * 3.5);
-    // Sparse melody, only sometimes (60% of bars) to keep it breathing
-    if (Math.random() < 0.6) {
-      const phrase = MELODY[bar % MELODY.length];
-      for (const { note, beat: b } of phrase) {
-        const t = time + b * Tone.Time("4n").toSeconds();
-        bgBell?.triggerAttackRelease(note, "8n", t, 0.5);
-      }
+function fade(el: HTMLAudioElement, from: number, to: number, durMs: number, onDone?: () => void): void {
+  const steps = 20;
+  const stepMs = durMs / steps;
+  let i = 0;
+  el.volume = Math.max(0, Math.min(1, from));
+  const timer = window.setInterval(() => {
+    i++;
+    const t = i / steps;
+    el.volume = Math.max(0, Math.min(1, from + (to - from) * t));
+    if (i >= steps) {
+      window.clearInterval(timer);
+      fadeTimers.delete(timer);
+      onDone?.();
     }
-    bar++;
-  }, "1m").start(0);
+  }, stepMs);
+  fadeTimers.add(timer);
+}
 
-  Tone.Transport.bpm.value = 68;
-  Tone.Transport.swing = 0.18;
-  Tone.Transport.swingSubdivision = "8n";
+function makeTrack(src: string): HTMLAudioElement {
+  const a = new Audio(src);
+  a.loop = true;
+  a.preload = "auto";
+  a.volume = 0;
+  return a;
+}
+
+async function startScene(scene: BgScene): Promise<void> {
+  if (!bgEnabled) return;
+  const src = TRACKS[scene];
+
+  // Same scene already playing.
+  if (currentAudio && currentAudio.src.endsWith(src) && !currentAudio.paused) {
+    return;
+  }
+
+  clearFades();
+  const next = makeTrack(src);
+  try {
+    await next.play();
+  } catch (e) {
+    // Browser blocked autoplay; will resume on next user gesture via enableBg().
+    console.warn("[music] autoplay blocked", e);
+    return;
+  }
+
+  const out = currentAudio;
+  currentAudio = next;
+  fade(next, 0, targetVolume(), FADE_MS);
+  if (out) {
+    fade(out, out.volume, 0, FADE_MS, () => {
+      out.pause();
+      out.src = "";
+    });
+  }
+}
+
+function stopBg(): void {
+  clearFades();
+  if (currentAudio) {
+    const out = currentAudio;
+    fade(out, out.volume, 0, FADE_MS, () => {
+      out.pause();
+      out.src = "";
+    });
+    currentAudio = null;
+  }
 }
 
 async function ensureToneStarted(): Promise<void> {
@@ -130,19 +112,21 @@ async function ensureToneStarted(): Promise<void> {
   toneStarted = true;
 }
 
-// Duck the master output when voice goes live so other players don't hear the
-// bg music bleed through your mic. Echo cancellation in WebRTC is tuned for
-// speech, not music, so even with EC on, a loud loop will leak. We fade the
-// destination volume down to almost nothing while voice is live, and back up
-// when the mic mutes/disconnects.
-let duckedForVoice = false;
-const DUCK_DB = -28;
+// Public scene-change API. Safe to call before bg is enabled; it just stores
+// the desired scene and starts on first enable.
+export async function setBgScene(scene: BgScene): Promise<void> {
+  currentScene = scene;
+  if (bgEnabled) await startScene(scene);
+}
 
+// Voice ducking: when the user's mic is live, drop the bg volume way down so
+// other players don't hear the music leaking through the mic.
 export function setVoiceDucking(active: boolean): void {
   if (duckedForVoice === active) return;
   duckedForVoice = active;
-  const target = active ? DUCK_DB : 0;
-  Tone.getDestination().volume.rampTo(target, 0.4);
+  if (currentAudio) {
+    fade(currentAudio, currentAudio.volume, targetVolume(), 400);
+  }
 }
 
 export function isBgEnabled(): boolean {
@@ -154,21 +138,15 @@ export function isSfxEnabled(): boolean {
 }
 
 export async function enableBg(): Promise<void> {
-  await ensureToneStarted();
-  ensureStarted();
-  if (Tone.Transport.state !== "started") {
-    Tone.Transport.start();
-  }
   bgEnabled = true;
   window.localStorage.setItem(BG_KEY, "1");
+  if (currentScene) await startScene(currentScene);
 }
 
 export function disableBg(): void {
-  if (Tone.Transport.state === "started") {
-    Tone.Transport.pause();
-  }
   bgEnabled = false;
   window.localStorage.setItem(BG_KEY, "0");
+  stopBg();
 }
 
 export async function toggleBg(): Promise<boolean> {
@@ -195,7 +173,6 @@ export async function toggleSfx(): Promise<boolean> {
 }
 
 export function loadBgPreference(): boolean {
-  // Default to on if the user has never set a preference
   return window.localStorage.getItem(BG_KEY) !== "0";
 }
 
@@ -203,11 +180,12 @@ export function loadSfxPreference(): boolean {
   return window.localStorage.getItem(SFX_KEY) !== "0";
 }
 
-// One-shot event sounds. All gated on `enabled` so they're silent if audio is off.
+// Short event sounds. Still procedural via Tone.js since they're brief, fire
+// once, and the previous DSP glitching was only the long bg loop.
 
 function playMelody(notes: { note: string; time: number; dur: string }[]): void {
   if (!sfxEnabled) return;
-  ensureStarted();
+  void ensureToneStarted();
   const reverb = new Tone.Reverb({ decay: 2, wet: 0.3 }).toDestination();
   const synth = new Tone.Synth({
     oscillator: { type: "sine" },

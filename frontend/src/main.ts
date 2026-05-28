@@ -15,6 +15,7 @@ import {
   playJoin,
   playRoundEnd,
   playRoundStart,
+  setBgScene,
   setVoiceDucking,
   toggleBg,
   toggleSfx,
@@ -813,6 +814,7 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       return;
     }
     case "RoundStart": {
+      void setBgScene("game");
       playRoundStart();
       const deadline = performance.now() + event.duration_ms;
       gameState.phase = {
@@ -872,6 +874,7 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       renderGameUI();
       return;
     case "GameOver":
+      void setBgScene("lobby");
       playGameOver();
       applyScores(gameState, event.final_scores);
       gameState.phase = {
@@ -913,6 +916,7 @@ function handleState(s: ConnState): void {
       return;
     case "open":
       statusEl.textContent = `room ${room} -- playing as ${name}`;
+      void setBgScene("lobby");
       return;
     case "reconnecting":
       statusEl.textContent = `reconnecting... (try ${s.attempt})`;
