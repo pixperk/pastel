@@ -912,7 +912,7 @@ impl Room {
 
         let diff = Difficulty::for_round(round_index);
         let count = self.game.mode.word_options() as usize;
-        let drawer_is_bot = self.players.get(&drawer).map_or(false, |s| s.is_bot);
+        let drawer_is_bot = self.players.get(&drawer).is_some_and(|s| s.is_bot);
         let options = if drawer_is_bot {
             self.words.sample_bot(diff, count)
         } else {

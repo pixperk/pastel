@@ -24,11 +24,32 @@ impl BotDifficulty {
             _ => Self::Medium,
         }
     }
-    fn guess_delay_secs(&self) -> (f64, f64) {
+    /// Initial wait before the FIRST guess of a round. Slow on purpose so
+    /// the bot lets some letters reveal before throwing darts.
+    fn initial_wait_secs(&self) -> (f64, f64) {
         match self {
-            Self::Easy => (25.0, 50.0),
-            Self::Medium => (10.0, 25.0),
-            Self::Hard => (3.0, 10.0),
+            Self::Easy => (35.0, 55.0),
+            Self::Medium => (25.0, 40.0),
+            Self::Hard => (15.0, 25.0),
+        }
+    }
+
+    /// Pause between guesses before any hint has fired. Slow.
+    fn pre_hint_pause_ms(&self) -> (u64, u64) {
+        match self {
+            Self::Easy => (8000, 14000),
+            Self::Medium => (5000, 9000),
+            Self::Hard => (3000, 6000),
+        }
+    }
+
+    /// Pause between guesses AFTER at least one hint has fired. Fast,
+    /// because the candidate pool shrinks dramatically.
+    fn post_hint_pause_ms(&self) -> (u64, u64) {
+        match self {
+            Self::Easy => (3000, 5000),
+            Self::Medium => (1500, 3000),
+            Self::Hard => (600, 1500),
         }
     }
     fn label(&self) -> &'static str {
@@ -224,6 +245,7 @@ async fn run_bot(
     let mut guess_index: usize = 0;
     let mut guess_sent = false;
     let mut next_guess_at: Option<tokio::time::Instant> = None;
+    let mut hints_revealed: u32 = 0;
 
     // Drain welcome, then greet
     let _ = unicast_rx.recv().await;
@@ -269,6 +291,7 @@ async fn run_bot(
                         guess_index = 0;
                         guess_candidates.clear();
                         next_guess_at = None;
+                        hints_revealed = 0;
                         if !is_drawer {
                             let mask_len = word_mask.chars().filter(|c| *c != ' ').count();
                             let mut candidates: Vec<String> = all_words.iter()
@@ -278,7 +301,7 @@ async fn run_bot(
                             use rand::seq::SliceRandom;
                             candidates.shuffle(&mut rand::thread_rng());
                             guess_candidates = candidates;
-                            let (lo, hi) = diff.guess_delay_secs();
+                            let (lo, hi) = diff.initial_wait_secs();
                             let first_wait = rand::thread_rng().gen_range(lo..hi);
                             next_guess_at = Some(tokio::time::Instant::now() + Duration::from_secs_f64(first_wait));
                         }
@@ -300,6 +323,13 @@ async fn run_bot(
                                 }
                                 true
                             });
+                            // Reset index since the pool just shrank.
+                            guess_index = 0;
+                            hints_revealed += 1;
+                            // Speed up: schedule a fresh guess soon.
+                            let (lo, hi) = diff.post_hint_pause_ms();
+                            let delay = rand::thread_rng().gen_range(lo..hi);
+                            next_guess_at = Some(tokio::time::Instant::now() + Duration::from_millis(delay));
                         }
                     }
                     ServerMsg::Game { event: GameEvent::WordPickStarted { drawer, .. }, .. } => {
@@ -344,17 +374,16 @@ async fn run_bot(
                     let guess = guess_candidates[guess_index].clone();
                     guess_index += 1;
                     room.send(my_id, ClientMsg::Guess { text: guess }).await;
-                    // Pause grows slightly each attempt so it doesn't feel robotic
-                    let attempt = guess_index as u64;
-                    let (base_lo, base_hi) = match diff {
-                        BotDifficulty::Easy => (5000u64, 9000u64),
-                        BotDifficulty::Medium => (3000, 5000),
-                        BotDifficulty::Hard => (1200, 2500),
+                    // Slow when no hints have fired, fast after hints arrive
+                    // (candidate pool is much smaller post-hint).
+                    let (lo, hi) = if hints_revealed == 0 {
+                        diff.pre_hint_pause_ms()
+                    } else {
+                        diff.post_hint_pause_ms()
                     };
-                    let jitter = rand::thread_rng().gen_range(base_lo..base_hi);
-                    let slowdown = (attempt * 300).min(3000);
+                    let delay = rand::thread_rng().gen_range(lo..hi);
                     next_guess_at = Some(
-                        tokio::time::Instant::now() + Duration::from_millis(jitter + slowdown),
+                        tokio::time::Instant::now() + Duration::from_millis(delay),
                     );
                 } else {
                     // Exhausted all candidates, stop
