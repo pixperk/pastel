@@ -1,5 +1,5 @@
 import { renderAvatar } from "./avatar";
-import { pickNameAndAvatar } from "./avatarPicker";
+import { hasStoredIdentity, loadStoredIdentity, pickNameAndAvatar } from "./avatarPicker";
 import { CHAT_BUCKET_CAPACITY, CHAT_BUCKET_REFILL_PER_SEC, TokenBucket } from "./bucket";
 import { DrawingSurface } from "./canvas";
 import { showCanvasEvent } from "./canvasEvent";
@@ -107,7 +107,13 @@ const voicePrefetch: Promise<typeof import("./voice")> | null = voiceRequested
   ? import("./voice")
   : null;
 
-const { name, avatar } = await pickNameAndAvatar();
+// Skip the picker entirely if the browser already has a saved name + avatar
+// from a previous session. Paired with the persistent client_token below, a
+// reload (or any return visit) lands on the server as the same player, with
+// the same scoreboard row, instead of a fresh duplicate.
+const { name, avatar } = hasStoredIdentity()
+  ? loadStoredIdentity()
+  : await pickNameAndAvatar();
 const clientToken = pickClientToken();
 document.title = `pastel -- room ${room}`;
 
@@ -235,6 +241,9 @@ function renderPlayers(): void {
     const youTag = p.id === youId ? '<span class="players-you">(you)</span>' : "";
     const hostTag =
       p.id === gameState.host ? '<span class="players-host">host</span>' : "";
+    const botTag = p.is_bot
+      ? '<span class="players-bot" title="bot"><i class="ph ph-robot" aria-hidden="true"></i></span>'
+      : "";
     const kickBtn =
       youAreHost && p.id !== youId
         ? `<button class="players-kick" data-target="${p.id}" title="Remove ${escapeHtml(
@@ -257,7 +266,7 @@ function renderPlayers(): void {
         ${kickBtn}
       </span>
       <div class="players-info">
-        <span class="players-name">${escapeHtml(p.name)}</span>
+        <span class="players-name">${escapeHtml(p.name)}${botTag}</span>
         <span class="players-meta">
           ${youTag}${hostTag}${guessedTag}${scoreTag}${muteBtn}
         </span>
@@ -630,8 +639,13 @@ function startBannerTicker(): void {
 
 function applyGameSnapshot(snap: import("./proto").GameSnapshot): void {
   gameState.host = snap.host;
-  // Keep selectedMode in sync so rematches use the last-played mode.
-  selectedMode = snap.mode;
+  // Only adopt the server's mode once an actual game has set it. The server's
+  // default is Standard, so taking snap.mode at Welcome would clobber the
+  // host's URL choice (?mode=Sprint, Marathon, etc.) before they can Start.
+  // Once we're past Lobby the mode is real and worth restoring for rematches.
+  if (snap.phase.kind !== "Lobby") {
+    selectedMode = snap.mode;
+  }
   gameState.scores.clear();
   for (const [id, v] of snap.scores) gameState.scores.set(id, v);
   switch (snap.phase.kind) {
@@ -685,7 +699,7 @@ function handleMessage(msg: ServerMsg): void {
         recordName(p.id, p.name);
         recordAvatar(p.id, p.avatar);
       }
-      players.set(msg.you, { id: msg.you, name, avatar });
+      players.set(msg.you, { id: msg.you, name, avatar, is_bot: false });
       recordName(msg.you, name);
       recordAvatar(msg.you, avatar);
       // Snapshot chat may reference identities of players who have since left;
@@ -838,6 +852,16 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       });
       return;
     case "WordPickStarted": {
+      // Detect the boundary from Lobby/GameOver into a fresh game. Don't
+      // use round_index === 0 alone -- that also matches every drawer's
+      // turn within round 0, which would zero out scores accumulated in
+      // earlier turns of the same first round.
+      const startingFreshGame =
+        gameState.phase.kind === "Lobby" || gameState.phase.kind === "GameOver";
+      if (startingFreshGame) {
+        gameState.scores.clear();
+        prevScores.clear();
+      }
       const deadline = performance.now() + event.deadline_ms;
       gameState.phase = {
         kind: "ChoosingWord",
