@@ -646,57 +646,69 @@ impl Room {
     }
 
     fn handle_react(&mut self, player: PlayerId, mood: DrawingMood) {
-        // Only during the drawing phase, and only from non-drawer participants.
-        let GamePhase::Drawing {
-            drawer,
-            reactions,
-            last_feedback,
-            ..
-        } = &mut self.game.phase
-        else {
-            return;
-        };
-        if player == *drawer {
-            return;
-        }
-        // Latest reaction from each guesser wins.
-        reactions.insert(player, mood);
+        // Collect everything inside one borrow of self.game.phase, then drop
+        // the borrow before calling self.next_seq / self.broadcast / self.unicast.
+        let (mood_changed, feedback_to_send, drawer_id) = {
+            let GamePhase::Drawing {
+                drawer,
+                reactions,
+                last_feedback,
+                ..
+            } = &mut self.game.phase
+            else {
+                return;
+            };
+            if player == *drawer {
+                return;
+            }
+            // Latest reaction from each guesser wins.
+            let previous = reactions.insert(player, mood);
+            let mood_changed = previous != Some(mood);
 
-        // Compute dominant mood. Threshold: half the *current guesser pool*
-        // (everyone alive except the drawer). Using guesser pool, not just
-        // those who've reacted, so silence reads as neutral rather than
-        // amplifying one early reaction.
-        let guesser_count = self.players.len().saturating_sub(1);
-        if guesser_count == 0 {
-            return;
-        }
-        let needed = guesser_count.div_ceil(2);
-        let loved = reactions
-            .values()
-            .filter(|m| matches!(m, DrawingMood::Loved))
-            .count();
-        let confused = reactions
-            .values()
-            .filter(|m| matches!(m, DrawingMood::Confused))
-            .count();
-
-        let dominant = if loved >= needed {
-            Some(DrawingMood::Loved)
-        } else if confused >= needed {
-            Some(DrawingMood::Confused)
-        } else {
-            None
+            // Threshold = half the current guesser pool (everyone except drawer).
+            // Counting against the pool, not just those who reacted, so a single
+            // early reaction doesn't trip the banner.
+            let guesser_count = self.players.len().saturating_sub(1);
+            let feedback_to_send = if guesser_count == 0 {
+                None
+            } else {
+                let needed = guesser_count.div_ceil(2);
+                let loved = reactions
+                    .values()
+                    .filter(|m| matches!(m, DrawingMood::Loved))
+                    .count();
+                let confused = reactions
+                    .values()
+                    .filter(|m| matches!(m, DrawingMood::Confused))
+                    .count();
+                let dominant = if loved >= needed {
+                    Some(DrawingMood::Loved)
+                } else if confused >= needed {
+                    Some(DrawingMood::Confused)
+                } else {
+                    None
+                };
+                match dominant {
+                    Some(d) if *last_feedback != Some(d) => {
+                        *last_feedback = Some(d);
+                        Some(d)
+                    }
+                    _ => None,
+                }
+            };
+            (mood_changed, feedback_to_send, *drawer)
         };
 
-        let Some(new_mood) = dominant else {
-            return;
-        };
-        if *last_feedback == Some(new_mood) {
-            return;
+        if mood_changed {
+            let seq = self.next_seq();
+            self.broadcast(ServerMsg::Game {
+                seq,
+                event: GameEvent::Reaction { player, mood },
+            });
         }
-        *last_feedback = Some(new_mood);
-        let drawer_id = *drawer;
-        self.unicast(drawer_id, ServerMsg::DrawingFeedback { mood: new_mood });
+        if let Some(d) = feedback_to_send {
+            self.unicast(drawer_id, ServerMsg::DrawingFeedback { mood: d });
+        }
     }
 
     fn handle_clear(&mut self, player: PlayerId) {

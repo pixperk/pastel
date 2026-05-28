@@ -155,6 +155,7 @@ pub fn validate_server(msg: &ServerMsg, depth: u8) -> Result<(), CodecError> {
             }
             crate::msg::GameEvent::JoinCanceled { .. } => {}
             crate::msg::GameEvent::HostChanged { .. } => {}
+            crate::msg::GameEvent::Reaction { .. } => {}
         },
         ServerMsg::WordOptions { words, .. } => {
             check_len("word_options.words", words.len(), MAX_WORD_OPTIONS)?;

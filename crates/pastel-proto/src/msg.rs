@@ -69,6 +69,13 @@ pub enum GameEvent {
     HostChanged {
         new_host: PlayerId,
     },
+    /// A guesser registered (or changed) their reaction to the drawing.
+    /// Broadcast so every client can roll a soft system line into chat.
+    /// Only emitted when the player's mood actually changes.
+    Reaction {
+        player: PlayerId,
+        mood: DrawingMood,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

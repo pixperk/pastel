@@ -955,6 +955,14 @@ function handleGameEvent(event: Extract<ServerMsg, { kind: "Game" }>["event"]): 
       renderPlayers();
       renderGameUI();
       return;
+    case "Reaction": {
+      const who = nameOf(event.player);
+      const line = event.mood === "Loved"
+        ? `${who} appreciated the drawing`
+        : `${who} is confused`;
+      chat.appendSystem(line, avatarOf(event.player));
+      return;
+    }
   }
 }
 
