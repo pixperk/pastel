@@ -671,7 +671,10 @@ impl Room {
             return;
         }
         let needed = guesser_count.div_ceil(2);
-        let loved = reactions.values().filter(|m| matches!(m, DrawingMood::Loved)).count();
+        let loved = reactions
+            .values()
+            .filter(|m| matches!(m, DrawingMood::Loved))
+            .count();
         let confused = reactions
             .values()
             .filter(|m| matches!(m, DrawingMood::Confused))
