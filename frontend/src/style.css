@@ -1808,6 +1808,20 @@ canvas {
   margin-left: 2px;
 }
 
+.players-bot {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  opacity: 0.7;
+  vertical-align: -1px;
+}
+
+.players-bot i {
+  font-size: 11px;
+}
+
 .players-head {
   display: flex;
   align-items: center;
